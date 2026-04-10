@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #app { height: 100%; overflow-x: hidden; }
+  body {
+    margin: 0;
+    background-color: #ffffff;
+    color: #1f2937; /* slate-800 */
+    font-family: 'Poppins', sans-serif;
+  }
+}
+
+/* Modal animation */
+@keyframes bounce-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  70% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-bounce-in {
+  animation: bounce-in 0.5s ease-out;
+}
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Slide up animation */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideUp {
+  animation: slideUp 0.4s ease-out;
+}
+
+/* Print styles - Hide unwanted elements when printing */
+@page {
+  margin: 0;
+  size: A4;
+}
+
+@media print {
+  /* Hide the top navigation header */
+  header,
+  nav,
+  .topbar,
+  [class*="Topbar"],
+  [class*="topbar"],
+  /* Hide sidebar */
+  aside,
+  .sidebar,
+  [class*="Sidebar"],
+  [class*="sidebar"],
+  /* Hide any localStorage debug text */
+  [class*="localStorage"],
+  [class*="localstorage"],
+  /* Hide browser chrome */
+  body > *:not(#app) {
+    display: none !important;
+  }
+  
+  /* Ensure only the form content prints */
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+  
+  /* Remove page border/outline */
+  #app, #root {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  
+  /* Remove any page breaks within forms */
+  .print\:shadow-none {
+    box-shadow: none !important;
+  }
+}

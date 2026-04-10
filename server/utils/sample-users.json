@@ -1,0 +1,68 @@
+[
+  {
+    "username": "admin",
+    "password": "admin123",
+    "role": "admin",
+    "name": "Admin User",
+    "email": "admin@petshospital.com",
+    "phone": "+92-300-1234567",
+    "isActive": true,
+    "createdAt": "2024-11-05T10:00:00.000Z",
+    "lastLogin": null
+  },
+  {
+    "username": "reception",
+    "password": "reception123",
+    "role": "reception",
+    "name": "Reception Staff",
+    "email": "reception@petshospital.com",
+    "phone": "+92-300-2345678",
+    "isActive": true,
+    "createdAt": "2024-11-05T10:00:00.000Z",
+    "lastLogin": null
+  },
+  {
+    "username": "doctor",
+    "password": "doctor123",
+    "role": "doctor",
+    "name": "Dr. Ahmed Khan",
+    "email": "doctor@petshospital.com",
+    "phone": "+92-300-3456789",
+    "isActive": true,
+    "createdAt": "2024-11-05T10:00:00.000Z",
+    "lastLogin": null
+  },
+  {
+    "username": "lab",
+    "password": "lab123",
+    "role": "lab",
+    "name": "Lab Technician",
+    "email": "lab@petshospital.com",
+    "phone": "+92-300-4567890",
+    "isActive": true,
+    "createdAt": "2024-11-05T10:00:00.000Z",
+    "lastLogin": null
+  },
+  {
+    "username": "pharmacy",
+    "password": "pharmacy123",
+    "role": "pharmacy",
+    "name": "Pharmacy Staff",
+    "email": "pharmacy@petshospital.com",
+    "phone": "+92-300-5678901",
+    "isActive": true,
+    "createdAt": "2024-11-05T10:00:00.000Z",
+    "lastLogin": null
+  },
+  {
+    "username": "shop",
+    "password": "shop123",
+    "role": "shop",
+    "name": "Pet Shop Manager",
+    "email": "shop@petshospital.com",
+    "phone": "+92-300-6789012",
+    "isActive": true,
+    "createdAt": "2024-11-05T10:00:00.000Z",
+    "lastLogin": null
+  }
+]

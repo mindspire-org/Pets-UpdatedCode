@@ -1,0 +1,221 @@
+export const medicineCatalog = {
+  Anti_Parasitic: {
+    Anti_Parasitic: [
+      'Bravecto',
+      'Flunex Pour-on',
+      'Nexgard',
+      'Revolution Plus for Cat',
+      'Spot-On (Dog)'
+    ]
+  },
+  Dewormer: {
+    Dewormer: [
+      'Canivem',
+      'Canivem Kitten',
+      'Drontal Cat',
+      'Drontal Plus',
+      'Praferan',
+      'Nilverm',
+      'Panacure',
+      'Piperazine',
+      'Propantel',
+      'Synanthic',
+      'Panacure Tablet',
+      'Adult Cat Deworming',
+      'Kitten Deworming',
+      'Puppy Under 5kg Deworming'
+    ]
+  },
+  Pet_Card: {
+    Pet_Card: [
+      'Pet Card (Dog)',
+      'Pet Card (Cat)'
+    ]
+  },
+  Medicine: {
+    Capsules: [
+      'Evion 200mg',
+      'Dalacin C',
+      'Dalacin C 300',
+      'Neogab 100mg'
+    ],
+    Cream: [
+      'Aquazole',
+      'Clotrimazole Cream',
+      'Lotrix',
+      'Econophen G',
+      'Fudic',
+      'Hydrozole',
+      'Intrasite',
+      'Kenacomb',
+      'Polyfax (Eye Ointment)'
+    ],
+    Drops: [
+      'ABPI Ear Drops',
+      'Betnesol-N',
+      'Methachlor Eye Drops',
+      'Otosporin Ear Drops',
+      'Earmite',
+      'Ear Guard',
+      'Vit Gold 15ml',
+      'Cipotic',
+      'Cipocain',
+      'Soda Glycerin',
+      'Prednisynth 10ml',
+      'Tobramycin',
+      'Mit-o-nil'
+    ],
+    Infusion: [
+      '25% Dextrose',
+      '5% Dextrose 1000ml',
+      '5% Dextrose 500ml',
+      '5% Dextrose 100ml',
+      '5% Dextrose 1/2 /NS 0.48% 500ml',
+      'Medisole NS 100ml',
+      'Normal Saline 100ml',
+      'Normal Saline 1000ml',
+      'Normal Saline 500ml',
+      'Potassium Chloride 25ml',
+      'Ringer lactate 1000ml',
+      'Ringer lactate 500ml',
+      'Sodium Bicarbonate 84mg/ml'
+    ],
+    Injection: [
+      'ADE-Max',
+      'Adrenaline',
+      'AminoPhiline',
+      'Aminox/AVE',
+      'Amoxicilin',
+      'Atropin Sulphate',
+      'B-Complex',
+      'Carasil',
+      'Bromoflox',
+      'Buserelin Acetate',
+      'Calcium Gluconate',
+      'Canglobe',
+      'Cefoperazone/Sulbactam 1gram',
+      'Cefotaxime 1 gram',
+      'Cefotaxime 250 mg',
+      'Cefotaxime 500 mg',
+      'Ceftiofur Hydrochloride',
+      'Ceftriaxone Na 1gram',
+      'Ceftriaxone Na 500mg',
+      'Ceftriaxone Na 250mg',
+      'Cephalexin 15%',
+      'Inj. Ciprofloxacin',
+      'Clindamycin',
+      'Cynocobalamine',
+      'Depo-Medrol 80mg/2ml',
+      'Dexamethasone',
+      'Dimenhydrinate',
+      'Diminazine Aceturate',
+      'Dizepam',
+      'Doramectin',
+      'Drotaverine',
+      'Enrofloxacine',
+      'Filgrastim',
+      'Flunixin Meglumine',
+      'Furosemide',
+      'Gentamycine',
+      'Gentamycine Sulphate 10%',
+      'Hepamerz',
+      'Imidocarb Dipropinate',
+      'Inf. Metronidazole',
+      'Ivermectic',
+      'Ketoprofen',
+      'Lentus Solostar',
+      'Marbofloxacin',
+      'Metabolase',
+      'Metabolase Forte',
+      'Mecobalamin',
+      'Medroxyprogesteron',
+      'Meloxicam',
+      'Meropenem 1g',
+      'Meropenem 500mg',
+      'Metoclopramide',
+      'Multina',
+      'Omeprazole 40mg',
+      'Ondensetron',
+      'Omipural',
+      'Oxytocin',
+      'Phenoxy 2 Methyl 2 Propoinic acid',
+      'Pheneramine Maleate',
+      'Prednisolone',
+      'Remdesivir Lyophilized',
+      'Sodium Selenite',
+      'Toldimfos Sodium',
+      'Tranexamic Acid',
+      'Trioxyl LA 50ml',
+      'Tylosin',
+      'Vincirstine Sulphate',
+      'Vitamin K1'
+    ],
+    Oral_Gel: [
+      'Somogel',
+      'Revomet Plus'
+    ],
+    Sachet: [
+      'Tylofurcin',
+      'ORS',
+      'Enflor',
+      'Cranberry',
+      'Prodilac',
+      'Symostress'
+    ],
+    Spray: [
+      'Amitraz',
+      'Frontliner 100ml',
+      'Frontliner 300ml',
+      'Frontliner 500ml',
+      'I-DMETH Solution 100ml',
+      'Itraconazole',
+      'Prosel',
+      'Ratava',
+      'Wound Spray'
+    ]
+  },
+  Surgical_Supplies: {
+    Surgical_Supplies: [
+      'Blood Bag',
+      'Butterfly',
+      'Cotton Bandage',
+      'D/Syringe 1 ml',
+      'D/Syringe 10 ml',
+      'D/Syringe 20 ml',
+      'D/Syringe 30 ml',
+      'D/Syringe 3 ml',
+      'D/Syringe 5 ml',
+      'D/Syringe 60 ml',
+      'Insuline Syringe',
+      'Dignity Sheet',
+      'Drip Set',
+      'Hamia Mash',
+      'I/V Cannula & Placement',
+      'I/V Chamber 100ml',
+      'Self-Adhesive Bandage 1"',
+      'Self-Adhesive Bandage 2"',
+      'Self-Adhesive Bandage 3"',
+      'Self-Adhesive Bandage 4"',
+      'Surgical Gauzes',
+      '3-Way Extension',
+      'Transfusion Set',
+      'Silk Suture',
+      'Vicryl'
+    ]
+  },
+  Vaccines: {
+    Vaccines: [
+      'Biofel PCH',
+      'Hipradog 7',
+      'Nobivac 1-HCP',
+      'Nobivac 1-HCPCh',
+      'Nobivac DHPPi',
+      'Nobivac L4',
+      'Nobivac Rabies',
+      'Parrot Vaccine',
+      'Biocan R'
+    ]
+  }
+};
+
+export const formatCatalogLabel = (value = '') => value.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
