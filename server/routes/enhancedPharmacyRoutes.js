@@ -3,6 +3,7 @@ import PharmacyMedicine from '../models/PharmacyMedicine.js';
 import PharmacySale from '../models/PharmacySale.js';
 import PharmacyPurchase from '../models/PharmacyPurchase.js';
 import PharmacyDue from '../models/PharmacyDue.js';
+import PharmacyCreditCustomer from '../models/PharmacyCreditCustomer.js';
 import { postPharmacySale, postPharmacyPurchase } from '../utils/accountingService.js';
 import dayGuard from '../middleware/dayGuard.js';
 import Receivable from '../models/Receivable.js';
@@ -332,19 +333,43 @@ router.post('/sales', dayGuard('pharmacy'), async (req, res) => {
       }
 
       if (medicine.category === 'Injection') {
-        // Handle injection partial sale
-        const mlUsed = parseFloat(item.mlUsed);
+        // Initialize remainingMl if not set
+        if (!medicine.remainingMl && medicine.mlPerVial) {
+          medicine.remainingMl = medicine.mlPerVial * medicine.quantity;
+        }
+
+        // If no mlPerVial defined, treat as regular quantity-based sale (not ml-based)
+        const isMlBased = medicine.mlPerVial && medicine.mlPerVial > 0;
+
+        if (!isMlBased) {
+          // Fall through to regular sale logic below
+          const quantity = parseFloat(item.quantity);
+          if (isNaN(quantity) || quantity <= 0) {
+            return res.status(400).json({ success: false, message: `Invalid quantity for ${item.medicineName}` });
+          }
+          if (quantity > medicine.quantity) {
+            return res.status(400).json({ success: false, message: `Only ${medicine.quantity} units available for ${medicine.medicineName}` });
+          }
+          medicine.quantity -= quantity;
+          await medicine.save();
+          processedItems.push({ ...item, quantity, mlUsed: 0 });
+          continue;
+        }
+
+        // Handle injection partial sale (ml-based)
+        // If mlUsed not provided (e.g. from POS selling whole vials), default to quantity * mlPerVial
+        let mlUsed = parseFloat(item.mlUsed);
+        if (isNaN(mlUsed) || mlUsed <= 0) {
+          const mlPerVial = medicine.mlPerVial || 1;
+          const qty = parseInt(item.quantity) || 1;
+          mlUsed = mlPerVial * qty;
+        }
         
         if (isNaN(mlUsed) || mlUsed <= 0) {
           return res.status(400).json({ 
             success: false, 
             message: `Invalid ML amount for ${item.medicineName}` 
           });
-        }
-
-        // Initialize remainingMl if not set
-        if (!medicine.remainingMl && medicine.mlPerVial) {
-          medicine.remainingMl = medicine.mlPerVial * medicine.quantity;
         }
 
         const currentRemainingMl = medicine.remainingMl || 0;
@@ -365,8 +390,6 @@ router.post('/sales', dayGuard('pharmacy'), async (req, res) => {
         // If batch is completely used, mark as inactive or update quantity
         if (newRemainingMl <= 0) {
           medicine.quantity = 0;
-          // Keep the batch active until a new batch is added
-          // This ensures the same batch continues to appear until finished
         }
         
         await medicine.save();
@@ -913,6 +936,158 @@ router.get('/reports/top-selling', async (req, res) => {
       .slice(0, parseInt(limit));
 
     res.json({ success: true, data: topSelling });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==================== CREDIT CUSTOMERS ====================
+
+// Get all credit customers
+router.get('/credit-customers', async (req, res) => {
+  try {
+    const customers = await PharmacyCreditCustomer.find({ isActive: true }).sort({ createdAt: -1 });
+    res.json({ success: true, data: customers });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get single credit customer
+router.get('/credit-customers/:id', async (req, res) => {
+  try {
+    const customer = await PharmacyCreditCustomer.findById(req.params.id);
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
+    res.json({ success: true, data: customer });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Create credit customer
+router.post('/credit-customers', async (req, res) => {
+  try {
+    const { name, phone, cnic, address } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
+    const customer = new PharmacyCreditCustomer({ name, phone, cnic, address });
+    await customer.save();
+    res.status(201).json({ success: true, data: customer });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update credit customer
+router.put('/credit-customers/:id', async (req, res) => {
+  try {
+    const { name, phone, cnic, address, totalDue, totalPaid } = req.body;
+    const updated = await PharmacyCreditCustomer.findByIdAndUpdate(
+      req.params.id,
+      { $set: { name, phone, cnic, address, totalDue, totalPaid } },
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(404).json({ success: false, message: 'Customer not found' });
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get credit sales for a customer (by CNIC or phone) — for Pay Bill dialog
+router.get('/credit-customers/:id/sales', async (req, res) => {
+  try {
+    const customer = await PharmacyCreditCustomer.findById(req.params.id);
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
+
+    // Find all sales where paymentMethod='Credit' and customer matches by CNIC or phone
+    const sales = await PharmacySale.find({
+      paymentMethod: 'Credit',
+      $or: [
+        { customerCnic: customer.cnic },
+        { customerContact: customer.phone },
+        { customerName: customer.name },
+      ],
+    }).sort({ createdAt: -1 }).lean();
+
+    // Map to receipt format
+    const receipts = sales.map(s => ({
+      _id: s._id,
+      invoiceNumber: s.invoiceNumber,
+      createdAt: s.createdAt,
+      totalAmount: s.totalAmount || 0,
+      receivedAmount: s.receivedAmount || 0,
+      balanceDue: s.balanceDue || 0,
+      remaining: Math.max(0, (s.totalAmount || 0) - (s.receivedAmount || 0)),
+    }));
+
+    res.json({ success: true, data: receipts });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Record a payment (pay bill)
+router.post('/credit-customers/:id/pay', async (req, res) => {
+  try {
+    const { amount, notes, invoiceNumber, receiptPayAmounts } = req.body;
+    const paid = Math.max(0, Number(amount) || 0);
+    const customer = await PharmacyCreditCustomer.findById(req.params.id);
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
+    customer.totalPaid = (customer.totalPaid || 0) + paid;
+    customer.totalDue = Math.max(0, (customer.totalDue || 0) - paid);
+    // Record in payment history
+    customer.paymentHistory.push({
+      amount: paid,
+      notes: notes || '',
+      invoiceNumber: invoiceNumber || '',
+      paidAt: new Date(),
+    });
+    await customer.save();
+
+    // Update individual PharmacySale records if per-receipt amounts provided
+    if (receiptPayAmounts && typeof receiptPayAmounts === 'object') {
+      for (const [saleId, amtStr] of Object.entries(receiptPayAmounts)) {
+        const amt = Number(amtStr) || 0;
+        if (amt <= 0) continue;
+        try {
+          const sale = await PharmacySale.findById(saleId);
+          if (sale) {
+            sale.receivedAmount = (sale.receivedAmount || 0) + amt;
+            sale.balanceDue = Math.max(0, (sale.totalAmount || 0) - sale.receivedAmount);
+            await sale.save();
+          }
+        } catch {}
+      }
+    }
+
+    res.json({ success: true, data: customer });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get payment history for a credit customer
+router.get('/credit-customers/:id/payment-history', async (req, res) => {
+  try {
+    const customer = await PharmacyCreditCustomer.findById(req.params.id).lean();
+    if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
+    const history = (customer.paymentHistory || []).sort((a, b) => new Date(b.paidAt) - new Date(a.paidAt));
+    res.json({ success: true, data: history });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Delete (soft) credit customer
+router.delete('/credit-customers/:id', async (req, res) => {
+  try {
+    const deleted = await PharmacyCreditCustomer.findByIdAndUpdate(
+      req.params.id,
+      { $set: { isActive: false } },
+      { new: true }
+    );
+    if (!deleted) return res.status(404).json({ success: false, message: 'Customer not found' });
+    res.json({ success: true, message: 'Customer deleted' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

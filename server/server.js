@@ -43,6 +43,15 @@ import staffAdvanceRoutes from "./routes/staffAdvanceRoutes.js";
 import voucherRoutes from "./routes/voucherRoutes.js";
 import budgetRoutes from "./routes/budgetRoutes.js";
 import medicalFormRoutes from "./routes/medicalFormRoutes.js";
+import companyRoutes from "./routes/companyRoutes.js";
+import purchaseOrderRoutes from "./routes/purchaseOrderRoutes.js";
+import pharmacyInvoiceRoutes from "./routes/pharmacyInvoiceRoutes.js";
+import pharmacyPurchaseDraftRoutes from "./routes/pharmacyPurchaseDraftRoutes.js";
+import holdBillRoutes from "./routes/holdBillRoutes.js";
+import holdInvoiceRoutes from "./routes/holdInvoiceRoutes.js";
+import pharmacySettingsRoutes from "./routes/pharmacySettingsRoutes.js";
+import sidebarConfigRoutes from "./routes/sidebarConfigRoutes.js";
+import SidebarConfig from "./models/SidebarConfig.js";
 
 dotenv.config();
 
@@ -90,6 +99,226 @@ connectDB();
     }
   } catch (e) {
     console.warn("⚠️  Failed to ensure default admin:", e?.message || e);
+  }
+})();
+
+// Ensure sidebar configs exist (backend-driven sidebars)
+(async () => {
+  try {
+    const defaults = [
+      {
+        portalId: "admin",
+        name: "Admin Portal",
+        version: 1,
+        groups: [
+          {
+            id: "main",
+            title: "",
+            order: 0,
+            items: [
+              { id: "dashboard", label: "Dashboard", path: "/admin", iconKey: "FiGrid", order: 0, end: true },
+              { id: "users", label: "Users", path: "/admin/users", iconKey: "FiUsers", order: 1 },
+              { id: "sidebar-permissions", label: "Sidebar Permissions", path: "/admin/sidebar-permissions", iconKey: "FiShield", order: 2 },
+              { id: "doctors", label: "Doctors", path: "/admin/doctors", iconKey: "FiUserCheck", order: 3 },
+              { id: "staff", label: "Staff Management", path: "/admin/staff", iconKey: "FiUserPlus", order: 4 },
+              { id: "pets", label: "Pets Records", path: "/admin/pets", iconKey: "FiBookOpen", order: 5 },
+              { id: "clients", label: "Clients Directory", path: "/admin/clients", iconKey: "FiUserCheck", order: 6 },
+              { id: "financials", label: "Financial Reports", path: "/admin/financials", iconKey: "FiDollarSign", order: 7 },
+              { id: "finance-center", label: "Finance and Center", path: "/admin/finance-center", iconKey: "FiDollarSign", order: 8 },
+              { id: "accounting-overview", label: "Accounting Overview", path: "/admin/accounting-overview", iconKey: "FiDollarSign", order: 9 },
+              { id: "chart-of-accounts", label: "Chart of Accounts", path: "/admin/chart-of-accounts", iconKey: "FiBookOpen", order: 10 },
+              { id: "vouchers", label: "Vouchers", path: "/admin/vouchers", iconKey: "FiDollarSign", order: 11 },
+              { id: "petty-cash", label: "Petty Cash", path: "/admin/petty-cash", iconKey: "FiDollarSign", order: 12 },
+              { id: "suppliers", label: "Suppliers", path: "/admin/suppliers", iconKey: "FiUsers", order: 13 },
+              { id: "receivables", label: "Receivables", path: "/admin/receivables", iconKey: "FiDollarSign", order: 14 },
+              { id: "payables", label: "Payables", path: "/admin/payables", iconKey: "FiDollarSign", order: 15 },
+              { id: "vendor-payments", label: "Vendor Payments", path: "/admin/vendor-payments", iconKey: "FiDollarSign", order: 16 },
+              { id: "budget-planner", label: "Budget Planner", path: "/admin/budget-planner", iconKey: "FiDollarSign", order: 17 },
+              { id: "staff-advances", label: "Staff Advances", path: "/admin/staff-advances", iconKey: "FiDollarSign", order: 18 },
+              { id: "day-sessions", label: "Day Sessions", path: "/admin/day-sessions", iconKey: "FiClock", order: 19 },
+              { id: "expenses", label: "Expenses", path: "/admin/expenses", iconKey: "FiTrendingDown", order: 20 },
+              { id: "inventory", label: "Inventory", path: "/admin/inventory", iconKey: "FiBox", order: 21 },
+              { id: "hospital-inventory", label: "Hospital Inventory", path: "/admin/hospital-inventory", iconKey: "FiHome", order: 22 },
+              { id: "logs", label: "System Logs", path: "/admin/logs", iconKey: "FiActivity", order: 23 },
+              { id: "settings", label: "Settings", path: "/admin/settings", iconKey: "FiSettings", order: 24 },
+            ],
+          },
+        ],
+      },
+      {
+        portalId: "reception",
+        name: "Reception Portal",
+        version: 1,
+        groups: [
+          {
+            id: "main",
+            title: "",
+            order: 0,
+            items: [
+              { id: "dashboard", label: "Dashboard", path: "/reception", iconKey: "FiGrid", order: 0, end: true },
+              { id: "pets", label: "Pets Registration", path: "/reception/pets", iconKey: "FiUserPlus", order: 1 },
+              { id: "clients", label: "Clients Directory", path: "/reception/clients", iconKey: "FiUsers", order: 2 },
+              { id: "appointments", label: "Appointments", path: "/reception/appointments", iconKey: "FiCalendar", order: 3 },
+              { id: "visits", label: "Visit Records", path: "/reception/visits", iconKey: "FiFileText", order: 4 },
+              { id: "billing", label: "Billing", path: "/reception/billing", iconKey: "FiDollarSign", order: 5 },
+              { id: "reports", label: "Reports", path: "/reception/reports", iconKey: "FiBarChart2", order: 6 },
+              { id: "forms", label: "Medical Forms", path: "/reception/forms", iconKey: "FiClipboard", order: 7 },
+              { id: "procedures", label: "Procedures", path: "/reception/procedures", iconKey: "FiClipboard", order: 8 },
+              { id: "settings", label: "Settings", path: "/reception/settings", iconKey: "FiSettings", order: 9 },
+            ],
+          },
+        ],
+      },
+      {
+        portalId: "lab",
+        name: "Lab Portal",
+        version: 1,
+        groups: [
+          {
+            id: "main",
+            title: "",
+            order: 0,
+            items: [
+              { id: "dashboard", label: "Dashboard", path: "/lab", iconKey: "FiGrid", order: 0, end: true },
+              { id: "catalog", label: "Test Catalog", path: "/lab/catalog", iconKey: "FiActivity", order: 1 },
+              { id: "requests", label: "Requests", path: "/lab/requests", iconKey: "FiList", order: 2 },
+              { id: "add-report", label: "Test Reports", path: "/lab/add-report", iconKey: "FiFilePlus", order: 3 },
+              { id: "reports", label: "Reports", path: "/lab/reports", iconKey: "FiActivity", order: 4 },
+              { id: "inventory", label: "Inventory", path: "/lab/inventory", iconKey: "FiPackage", order: 5 },
+              { id: "sample-intake", label: "Sample Intake", path: "/lab/sample-intake", iconKey: "FiClipboard", order: 6 },
+              { id: "radiology", label: "Radiology", path: "/lab/radiology", iconKey: "FiImage", order: 7 },
+              { id: "suppliers", label: "Suppliers", path: "/lab/suppliers", iconKey: "FiList", order: 8 },
+              { id: "settings", label: "Settings", path: "/lab/settings", iconKey: "FiSettings", order: 9 },
+            ],
+          },
+        ],
+      },
+      {
+        portalId: "doctor",
+        name: "Doctor Portal",
+        version: 1,
+        groups: [
+          {
+            id: "main",
+            title: "",
+            order: 0,
+            items: [
+              { id: "dashboard", label: "Dashboard", path: "/doctor", iconKey: "FiGrid", order: 0, end: true },
+              { id: "medicines", label: "Medicines", path: "/doctor/medicines", iconKey: "FiLayers", order: 1 },
+              { id: "prescription", label: "Prescription", path: "/doctor/prescription", iconKey: "FiFileText", order: 2 },
+              { id: "medical-forms", label: "Medical Forms", path: "/doctor/medical-forms", iconKey: "FiClipboard", order: 3 },
+              { id: "medical-forms-history", label: "Medical Forms History", path: "/doctor/medical-forms-history", iconKey: "FiClipboard", order: 4 },
+              { id: "details", label: "Doctor Details", path: "/doctor/details", iconKey: "FiUser", order: 5 },
+              { id: "patients", label: "Patients", path: "/doctor/patients", iconKey: "FiClipboard", order: 6 },
+              { id: "settings", label: "Settings", path: "/doctor/settings", iconKey: "FiSettings", order: 7 },
+            ],
+          },
+        ],
+      },
+      {
+        portalId: "shop",
+        name: "Shop Portal",
+        version: 1,
+        groups: [
+          {
+            id: "main",
+            title: "",
+            order: 0,
+            items: [
+              { id: "dashboard", label: "Dashboard", path: "/shop", iconKey: "FiHome", order: 0, end: true },
+              { id: "products", label: "Products", path: "/shop/products", iconKey: "FiPackage", order: 1 },
+              { id: "pos", label: "Point of Sale", path: "/shop/pos", iconKey: "FiShoppingCart", order: 2 },
+              { id: "suppliers", label: "Suppliers", path: "/shop/suppliers", iconKey: "FiTruck", order: 3 },
+              { id: "reports", label: "Sales Reports", path: "/shop/reports", iconKey: "FiBarChart2", order: 4 },
+              { id: "settings", label: "Settings", path: "/shop/settings", iconKey: "FiSettings", order: 5 },
+            ],
+          },
+        ],
+      },
+      {
+        portalId: "pharmacy",
+        name: "Pharmacy Portal",
+        version: 1,
+        groups: [
+          {
+            id: "dashboard",
+            title: "Dashboard",
+            order: 0,
+            items: [{ id: "dashboard", label: "Dashboard", path: "/pharmacy", iconKey: "FiHome", order: 0, end: true }],
+          },
+          {
+            id: "pos",
+            title: "POS",
+            order: 1,
+            items: [
+              { id: "pos", label: "Point of Sale", path: "/pharmacy/pos", iconKey: "FiShoppingCart", order: 0 },
+              { id: "credit-customers", label: "Credit Customers", path: "/pharmacy/credit-customers", iconKey: "FiCreditCard", order: 1 },
+            ],
+          },
+          {
+            id: "inventory",
+            title: "Inventory",
+            order: 2,
+            items: [
+              { id: "medicines", label: "Inventory", path: "/pharmacy/medicines", iconKey: "FiPackage", order: 0 },
+              { id: "suppliers", label: "Suppliers", path: "/pharmacy/suppliers", iconKey: "FiUsers", order: 1 },
+              { id: "companies", label: "Companies", path: "/pharmacy/companies", iconKey: "FiGrid", order: 2 },
+              { id: "purchase-orders", label: "Purchase Orders", path: "/pharmacy/purchase-orders", iconKey: "FiFileText", order: 3 },
+            ],
+          },
+          {
+            id: "history",
+            title: "History",
+            order: 3,
+            items: [
+              { id: "sales-history", label: "Sales History", path: "/pharmacy/sales-history", iconKey: "FiFileText", order: 0 },
+              { id: "purchase-history", label: "Purchase History", path: "/pharmacy/purchase-history", iconKey: "FiFileText", order: 1 },
+              { id: "return-history", label: "Return History", path: "/pharmacy/return-history", iconKey: "FiFileText", order: 2 },
+            ],
+          },
+          {
+            id: "return",
+            title: "Return",
+            order: 4,
+            items: [
+              { id: "sales-return", label: "Sales Return", path: "/pharmacy/sales-return", iconKey: "FiCornerUpLeft", order: 0 },
+              { id: "supplier-returns", label: "Supplier Returns", path: "/pharmacy/supplier-returns", iconKey: "FiFileText", order: 1 },
+            ],
+          },
+          {
+            id: "referral",
+            title: "Referral",
+            order: 5,
+            items: [
+              { id: "referrals", label: "Referrals", path: "/pharmacy/referrals", iconKey: "FiFileText", order: 0 },
+              { id: "prescriptions", label: "Prescriptions", path: "/pharmacy/prescriptions", iconKey: "FiFileText", order: 1 },
+            ],
+          },
+          {
+            id: "other",
+            title: "Other",
+            order: 6,
+            items: [
+              { id: "reports", label: "Reports", path: "/pharmacy/reports", iconKey: "FiFileText", order: 0 },
+              { id: "notifications", label: "Notifications", path: "/pharmacy/notifications", iconKey: "FiBell", order: 1 },
+              { id: "audit-logs", label: "Audit Logs", path: "/pharmacy/audit-logs", iconKey: "FiActivity", order: 2 },
+              { id: "expenses", label: "Expenses", path: "/pharmacy/expenses", iconKey: "FiTrendingDown", order: 3 },
+              { id: "settings", label: "Settings", path: "/pharmacy/settings", iconKey: "FiSettings", order: 4 },
+            ],
+          },
+        ],
+      },
+    ];
+
+    for (const cfg of defaults) {
+      const existing = await SidebarConfig.findOne({ portalId: cfg.portalId });
+      if (!existing) {
+        await SidebarConfig.create(cfg);
+        console.log(`✅ SidebarConfig seeded: ${cfg.portalId}`);
+      }
+    }
+  } catch (e) {
+    console.warn("⚠️  Failed to ensure sidebar configs:", e?.message || e);
   }
 })();
 
@@ -194,6 +423,14 @@ app.use("/api/vendor-payments", vendorPaymentRoutes);
 app.use("/api/staff-advances", staffAdvanceRoutes);
 app.use("/api/budgets", budgetRoutes);
 app.use("/api/medical-forms", medicalFormRoutes);
+app.use("/api/companies", companyRoutes);
+app.use("/api/purchase-orders", purchaseOrderRoutes);
+app.use("/api/pharmacy-invoices", pharmacyInvoiceRoutes);
+app.use("/api/pharmacy-purchase-drafts", pharmacyPurchaseDraftRoutes);
+app.use("/api/hold-invoices", holdInvoiceRoutes);
+app.use("/api/hold-bills", holdBillRoutes);
+app.use("/api/pharmacy-settings", pharmacySettingsRoutes);
+app.use("/api/sidebar-config", sidebarConfigRoutes);
 
 // 404 handler
 app.use((req, res) => {

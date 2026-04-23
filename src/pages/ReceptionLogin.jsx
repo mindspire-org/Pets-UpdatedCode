@@ -25,7 +25,8 @@ export default function ReceptionLogin() {
           localStorage.setItem('reception_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role
+            role: user.role,
+            sidebarPermissions: user.sidebarPermissions || {}
           }))
           try { addActivity({ user: 'Reception', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/reception')

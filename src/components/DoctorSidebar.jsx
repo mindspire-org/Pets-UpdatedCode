@@ -1,9 +1,11 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { FiGrid, FiLogOut, FiFileText, FiUser, FiClipboard, FiLayers, FiSettings } from 'react-icons/fi'
 
 export default function DoctorSidebar({ collapsed=false, open=false, onClose=()=>{} }){
   const navigate = useNavigate()
+  const auth = JSON.parse(localStorage.getItem('doctor_auth') || '{}')
+
   const linkClass = ({ isActive }) => `flex items-center gap-3 px-4 py-3 rounded-xl transition text-sm font-medium ${isActive ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'}`
   const iconSize = collapsed ? 19 : 18
   const iconClass = collapsed ? 'transition-transform hover:scale-110' : ''
@@ -14,29 +16,41 @@ export default function DoctorSidebar({ collapsed=false, open=false, onClose=()=
     navigate('/doctor/login')
   }
 
+  const menuItems = useMemo(() => {
+    const allItems = [
+      { to: "/doctor", icon: FiGrid, label: "Dashboard", end: true, id: 'dashboard' },
+      { to: "/doctor/medicines", icon: FiLayers, label: "Medicines", id: 'medicines' },
+      { to: "/doctor/prescription", icon: FiFileText, label: "Prescription", id: 'prescription' },
+      { to: "/doctor/medical-forms", icon: FiClipboard, label: "Medical Forms", id: 'medical-forms' },
+      { to: "/doctor/details", icon: FiUser, label: "Doctor Details", id: 'details' },
+      { to: "/doctor/patients", icon: FiClipboard, label: "Patients", id: 'patients' },
+      { to: "/doctor/settings", icon: FiSettings, label: "Settings", id: 'settings' },
+    ]
+
+    // If user is admin, show all
+    if (auth.role === 'admin' || auth.role === 'Admin') return allItems;
+
+    // Filter based on permissions
+    const permissions = auth.sidebarPermissions?.doctor;
+    if (!permissions) return allItems; // Default to show all if no permissions set
+
+    return allItems.filter(item => permissions.includes(item.id));
+  }, [auth.role, auth.sidebarPermissions]);
+
   const Nav = (
     <nav className="space-y-1">
-      <NavLink to="/doctor" end className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiGrid size={iconSize} className={iconClass} /> {!collapsed && <span>Dashboard</span>}
-      </NavLink>
-      <NavLink to="/doctor/medicines" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiLayers size={iconSize} className={iconClass} /> {!collapsed && <span>Medicines</span>}
-      </NavLink>
-      <NavLink to="/doctor/prescription" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiFileText size={iconSize} className={iconClass} /> {!collapsed && <span>Prescription</span>}
-      </NavLink>
-      <NavLink to="/doctor/medical-forms" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiClipboard size={iconSize} className={iconClass} /> {!collapsed && <span>Medical Forms</span>}
-      </NavLink>
-      <NavLink to="/doctor/details" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiUser size={iconSize} className={iconClass} /> {!collapsed && <span>Doctor Details</span>}
-      </NavLink>
-      <NavLink to="/doctor/patients" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiClipboard size={iconSize} className={iconClass} /> {!collapsed && <span>Patients</span>}
-      </NavLink>
-      <NavLink to="/doctor/settings" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiSettings size={iconSize} className={iconClass} /> {!collapsed && <span>Settings</span>}
-      </NavLink>
+      {menuItems.map(item => (
+        <NavLink 
+          key={item.to}
+          to={item.to} 
+          end={item.end}
+          className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} 
+          onClick={onClose}
+        >
+          <item.icon size={iconSize} className={iconClass} /> 
+          {!collapsed && <span>{item.label}</span>}
+        </NavLink>
+      ))}
       <button onClick={logout} className={`${collapsed ? 'justify-center px-2' : ''} w-full mt-4 flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 transition text-sm font-medium`}>
         <FiLogOut size={iconSize} className={iconClass} /> {!collapsed && <span>Logout</span>}
       </button>

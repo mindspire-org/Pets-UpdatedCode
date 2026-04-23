@@ -21,14 +21,31 @@ const purchaseHistorySchema = new mongoose.Schema({
 });
 
 const paymentHistorySchema = new mongoose.Schema({
-  amount: Number,
-  paymentMethod: String,
-  notes: String,
-  paymentDate: {
+  invoiceNumber: {
+    type: String,
+    default: ''
+  },
+  amount: {
+    type: Number,
+    default: 0
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'Card', 'Online Transfer'],
+    default: 'Cash'
+  },
+  date: {
     type: Date,
     default: Date.now
   },
-  invoiceNumber: String
+  notes: {
+    type: String,
+    default: ''
+  },
+  paymentDate: {
+    type: Date,
+    default: Date.now
+  }
 });
 
 const supplierSchema = new mongoose.Schema({
@@ -41,6 +58,14 @@ const supplierSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  companyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company'
+  },
+  companyIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company'
+  }],
   contactPerson: {
     type: String,
     default: ''
@@ -78,6 +103,15 @@ const supplierSchema = new mongoose.Schema({
   notes: {
     type: String,
     default: ''
+  },
+  taxId: {
+    type: String,
+    default: ''
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'active'
   }
 }, {
   timestamps: true

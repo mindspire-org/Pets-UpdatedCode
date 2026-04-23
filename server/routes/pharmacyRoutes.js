@@ -327,8 +327,10 @@ router.post('/purchases', async (req, res) => {
     for (const item of items) {
       // Check if medicine with same batch already exists
       const existingMedicine = await PharmacyMedicine.findOne({
-        medicineName: item.medicineName,
-        batchNo: item.batchNo
+        $or: [
+          { medicineName: item.medicineName, batchNo: item.batchNo },
+          { medicineName: item.medicineName, batchNo: "N/A" }
+        ]
       });
       
       if (existingMedicine) {

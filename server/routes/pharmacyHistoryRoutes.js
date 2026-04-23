@@ -195,10 +195,53 @@ router.get("/purchase-history", async (req, res) => {
 
     // Get purchases with pagination
     const purchases = await PharmacyPurchase.find(filter)
+      .select("+reviewedBy") // Explicitly include if hidden, though usually unnecessary for standard finds
       .sort(sortObj)
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
+
+    // Fetch current stock for each medicine and calculate remaining amounts after returns
+    const purchasesWithStock = await Promise.all(
+      purchases.map(async (purchase) => {
+        const itemsWithStock = await Promise.all(
+          (purchase.items || []).map(async (item) => {
+            const medicine = await PharmacyMedicine.findOne({
+              $or: [
+                { _id: item.medicineId },
+                { medicineName: item.medicineName, batchNo: item.batchNo },
+                { medicineName: item.medicineName, batchNo: { $in: ["N/A", "", null] } },
+                { medicineName: item.medicineName, batchNo: { $exists: false } }
+              ],
+              isActive: true,
+            }).lean();
+            return {
+              ...item,
+              medicineId: medicine ? medicine._id : item.medicineId, // Use real ID from inventory
+              currentStock: medicine ? medicine.quantity : 0,
+            };
+          })
+        );
+
+        // Fetch returns for this purchase to calculate remaining amount
+        const returns = await PharmacyReturn.find({
+          originalPurchaseId: purchase._id,
+          returnType: "Supplier Return",
+          refundStatus: { $in: ["Processed", "Pending"] }
+        }).lean();
+
+        const totalReturnedAmount = returns.reduce((sum, ret) => sum + (ret.totalReturnAmount || 0), 0);
+        const originalTotal = purchase.netTotal ?? purchase.totalAmount ?? 0;
+        const remainingAmount = Math.max(0, originalTotal - totalReturnedAmount);
+
+        return {
+          ...purchase,
+          items: itemsWithStock,
+          totalReturnedAmount,
+          remainingAmount
+        };
+      })
+    );
 
     // Get total count for pagination
     const totalCount = await PharmacyPurchase.countDocuments(filter);
@@ -231,7 +274,7 @@ router.get("/purchase-history", async (req, res) => {
     res.json({
       success: true,
       data: {
-        purchases,
+        purchases: purchasesWithStock,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalCount / parseInt(limit)),
@@ -426,18 +469,72 @@ router.post("/returns/customer", async (req, res) => {
       0,
     );
 
-    // Process inventory adjustments (add back to stock)
+    // Process inventory adjustments (add back to stock) and update original sale
     for (const item of items) {
+      // 1. Stock restoration
       const medicine = await PharmacyMedicine.findById(item.medicineId);
       if (medicine) {
-        // Use quantity field as per PharmacyReturn model schema
         const returnQty = parseFloat(item.quantity) || 0;
         if (returnQty > 0) {
           medicine.quantity += returnQty;
           await medicine.save();
         }
       }
+
+      // 2. Update item quantity in original sale
+      const saleItem = originalSale.items.find(
+        (it) => it.medicineId.toString() === item.medicineId.toString() && it.batchNo === item.batchNo,
+      );
+      if (saleItem) {
+        const returnQty = parseFloat(item.quantity) || 0;
+        saleItem.quantity = Math.max(0, saleItem.quantity - returnQty);
+
+        // Recalculate line discount amount and total price for this item
+        const basePrice = (saleItem.pricePerUnit || 0) * saleItem.quantity;
+        const discPercent = saleItem.lineDiscount || 0;
+        const discountedPrice = basePrice * (1 - discPercent / 100);
+
+        saleItem.totalPrice = discountedPrice;
+        saleItem.lineDiscountAmt = basePrice * (discPercent / 100);
+      }
     }
+
+    // 3. Recalculate financial totals for the original sale
+    let newSubtotal = 0;
+    let newLineDiscounts = 0;
+
+    originalSale.items.forEach((it) => {
+      newSubtotal += it.totalPrice;
+      newLineDiscounts += it.lineDiscountAmt || 0;
+    });
+
+    originalSale.subtotal = newSubtotal;
+    originalSale.lineDiscounts = newLineDiscounts;
+
+    const billDiscPct = originalSale.billDiscountPercent || 0;
+    const billDiscAmt = originalSale.billDiscountAmount || (newSubtotal * billDiscPct / 100);
+    originalSale.billDiscountAmount = billDiscAmt;
+
+    const taxPct = originalSale.salesTaxPercent || 0;
+    const afterBillDisc = newSubtotal - billDiscAmt;
+    const newTaxAmt = afterBillDisc * (taxPct / 100);
+    originalSale.salesTaxAmount = newTaxAmt;
+
+    const newTotal = afterBillDisc + newTaxAmt + (originalSale.previousDue || 0);
+    originalSale.totalAmount = newTotal;
+    originalSale.discount = newLineDiscounts + billDiscAmt;
+
+    // Adjust received amount and balance due if necessary
+    // If it was a cash sale and fully received, we reduce receivedAmount as well
+    if (originalSale.paymentMethod !== "Credit") {
+      originalSale.receivedAmount = newTotal;
+      originalSale.balanceDue = 0;
+    } else {
+      // For credit sales, receivedAmount stays what it was, but balanceDue decreases
+      originalSale.balanceDue = Math.max(0, newTotal - (originalSale.receivedAmount || 0));
+    }
+
+    await originalSale.save();
 
     // Create return record
     const customerReturn = new PharmacyReturn({
@@ -494,10 +591,11 @@ router.post("/returns/supplier", async (req, res) => {
     const lastReturn = await PharmacyReturn.findOne({
       returnType: "Supplier Return",
     }).sort({ createdAt: -1 });
-    let returnNumber = "SR-0001";
-    if (lastReturn && lastReturn.returnNumber) {
-      const lastNumber = parseInt(lastReturn.returnNumber.split("-")[1]);
-      returnNumber = `SR-${String(lastNumber + 1).padStart(4, "0")}`;
+    let returnNumber = "RTN-SUP-0001";
+    if (lastReturn && lastReturn.returnNumber && lastReturn.returnNumber.startsWith("RTN-SUP-")) {
+      const parts = lastReturn.returnNumber.split("-");
+      const lastSeq = parseInt(parts[2]);
+      returnNumber = `RTN-SUP-${String(lastSeq + 1).padStart(4, "0")}`;
     }
 
     // Calculate total return amount
@@ -508,9 +606,16 @@ router.post("/returns/supplier", async (req, res) => {
 
     // Process inventory adjustments (remove from stock)
     for (const item of items) {
-      const medicine = await PharmacyMedicine.findById(item.medicineId);
+      const medicine = await PharmacyMedicine.findOne({
+        $or: [
+          { _id: item.medicineId },
+          { medicineName: item.medicineName, batchNo: item.batchNo },
+          { medicineName: item.medicineName, batchNo: { $in: ["N/A", "", null] } },
+          { medicineName: item.medicineName, batchNo: { $exists: false } }
+        ]
+      });
       if (medicine) {
-        medicine.quantity = Math.max(0, medicine.quantity - item.quantity);
+        medicine.quantity = Math.max(0, medicine.quantity - (Number(item.quantity) || 0));
         await medicine.save();
       }
     }
@@ -522,12 +627,25 @@ router.post("/returns/supplier", async (req, res) => {
       supplierName,
       supplierContact,
       originalPurchaseId,
-      originalPurchaseOrderNo: req.body.originalPurchaseOrderNo,
-      items,
+      originalInvoiceNumber: req.body.invoiceNumber || req.body.invoiceNo, // Store real invoice here
+      originalPurchaseOrderNo: req.body.purchaseOrderNo,
+      items: items.map(it => ({
+        medicineId: it.medicineId,
+        medicineName: it.medicineName,
+        batchNo: it.batchNo,
+        category: it.category || "Medicine",
+        quantity: Number(it.quantity) || 0,
+        unit: it.unit || "Unit",
+        returnPrice: Number(it.returnPrice) || 0,
+        totalReturnAmount: Number(it.totalReturnAmount) || 0,
+        reason: it.reason || notes || "Supplier return",
+      })),
       totalReturnAmount,
       refundMethod,
       notes,
+      refundStatus: "Processed", // Auto-process supplier returns
       processedBy: req.body.processedBy || "System",
+      returnDate: new Date(),
     });
 
     await supplierReturn.save();
@@ -626,8 +744,10 @@ router.delete("/purchase-history/:id", async (req, res) => {
     // Remove stock for deleted purchase
     for (const item of purchase.items) {
       const medicine = await PharmacyMedicine.findOne({
-        medicineName: item.medicineName,
-        batchNo: item.batchNo,
+        $or: [
+          { medicineName: item.medicineName, batchNo: item.batchNo },
+          { medicineName: item.medicineName, batchNo: "N/A" }
+        ]
       });
       if (medicine) {
         medicine.quantity = Math.max(0, medicine.quantity - item.quantity);

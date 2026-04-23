@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { FiSearch, FiPlus, FiMinus, FiTrash2, FiPrinter, FiShoppingCart, FiX, FiGrid, FiList, FiEyeOff, FiMaximize2, FiEdit3, FiSave, FiDownload } from 'react-icons/fi';
-import { pharmacyMedicinesAPI, pharmacySalesAPI, settingsAPI } from '../../services/api';
+import { pharmacyMedicinesAPI, pharmacySalesAPI, pharmacySettingsAPI } from '../../services/api';
 import ReceiptGenerator from '../../components/pharmacy/ReceiptGenerator';
 
 export default function EnhancedPharmacyPOS() {
@@ -13,6 +13,8 @@ export default function EnhancedPharmacyPOS() {
     petName: ''
   });
   const [discount, setDiscount] = useState(0);
+  const [billDiscountPercent, setBillDiscountPercent] = useState(0);
+  const [salesTaxPercent, setSalesTaxPercent] = useState(0);
   const [showReceipt, setShowReceipt] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [lastSale, setLastSale] = useState(null);
@@ -20,6 +22,7 @@ export default function EnhancedPharmacyPOS() {
   const [viewMode, setViewMode] = useState('grid');
   const [hideInventory, setHideInventory] = useState(false);
   const [hospitalSettings, setHospitalSettings] = useState(null);
+  const [pharmacySettings, setPharmacySettings] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [paymentCharge, setPaymentCharge] = useState(0);
@@ -30,8 +33,16 @@ export default function EnhancedPharmacyPOS() {
   useEffect(() => {
     fetchMedicines();
     fetchHospitalSettings();
+    fetchPharmacySettings();
     loadPrescriptionData();
   }, []);
+
+  // Calculate discount amount when percentage changes
+  useEffect(() => {
+    const subtotal = calculateSubtotal();
+    const discountAmount = (subtotal * billDiscountPercent) / 100;
+    setDiscount(discountAmount);
+  }, [billDiscountPercent, cart]);
 
   useEffect(() => {
     const posData = localStorage.getItem('pharmacy_pos_data');
@@ -85,6 +96,30 @@ export default function EnhancedPharmacyPOS() {
       setHospitalSettings(response.data);
     } catch (error) {
       console.error('Error fetching settings:', error);
+    }
+  };
+
+  const fetchPharmacySettings = async () => {
+    try {
+      const response = await pharmacySettingsAPI.get();
+      const settings = response?.data || response || {};
+      
+      console.log('POS: Settings received from DB:', settings);
+      
+      // Update the settings object
+      setPharmacySettings(settings);
+      
+      // IMPORTANT: Extract and cast to numbers immediately
+      const defaultDisc = Number(settings.billDiscountPercent) || 0;
+      const defaultTax = Number(settings.salesTaxPercent) || 0;
+
+      // Update the specific state variables that drive the UI inputs
+      setBillDiscountPercent(defaultDisc);
+      setSalesTaxPercent(defaultTax);
+      
+      console.log('POS: Defaults applied to state:', { defaultDisc, defaultTax });
+    } catch (error) {
+      console.error('POS: Error fetching pharmacy settings:', error);
     }
   };
 
@@ -446,9 +481,16 @@ export default function EnhancedPharmacyPOS() {
     return cart.reduce((sum, item) => sum + item.totalPrice, 0);
   };
 
+  const calculateTax = () => {
+    const subtotal = calculateSubtotal();
+    const afterDiscount = Math.max(0, subtotal - discount);
+    return (afterDiscount * salesTaxPercent) / 100;
+  };
+
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
-    return Math.max(0, subtotal - discount + Number(paymentCharge||0));
+    const tax = calculateTax();
+    return Math.max(0, subtotal - discount + tax + Number(paymentCharge||0));
   };
 
   const processSale = async () => {
@@ -485,6 +527,10 @@ export default function EnhancedPharmacyPOS() {
         })),
         subtotal: calculateSubtotal(),
         discount: discount,
+        billDiscountPercent: billDiscountPercent,
+        billDiscountAmount: discount,
+        salesTaxPercent: salesTaxPercent,
+        salesTaxAmount: calculateTax(),
         paymentCharge: Number(paymentCharge||0),
         totalAmount: calculateTotal(),
         paymentMethod: paymentMethod,
@@ -501,7 +547,13 @@ export default function EnhancedPharmacyPOS() {
         // Reset form
         setCart([]);
         setCustomerInfo({ customerName: '', customerContact: '', petName: '' });
+        
+        // Reset to default values from settings
+        setBillDiscountPercent(pharmacySettings?.billDiscountPercent || 0);
+        setSalesTaxPercent(pharmacySettings?.salesTaxPercent || 0);
         setDiscount(0);
+        setPaymentCharge(0);
+        setIsChargeManual(false);
         
         // Refresh medicines to update stock
         fetchMedicines();
@@ -799,21 +851,65 @@ export default function EnhancedPharmacyPOS() {
                   <span>Subtotal:</span>
                   <span>PKR {calculateSubtotal().toFixed(2)}</span>
                 </div>
+                
+                {/* Bill Discount % */}
                 <div className="flex justify-between items-center">
-                  <span>Discount:</span>
-                  <input
-                    type="number"
-                    value={discount}
-                    onChange={(e) => setDiscount(Math.max(0, parseFloat(e.target.value) || 0))}
-                    className="w-24 px-2 py-1 border rounded text-right"
-                    min="0"
-                    step="0.01"
-                  />
+                  <span>Bill Discount ({pharmacySettings?.billDiscountPercent || 0}%):</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={billDiscountPercent}
+                      onChange={(e) => setBillDiscountPercent(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                      className="w-20 px-2 py-1 border rounded text-right"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                    />
+                    <span className="text-sm text-gray-500">%</span>
+                  </div>
                 </div>
-                <div className="flex justify-between font-semibold text-lg">
+                {discount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600">
+                    <span>Discount Amount:</span>
+                    <span>- PKR {discount.toFixed(2)}</span>
+                  </div>
+                )}
+                
+                {/* Sales Tax % */}
+                <div className="flex justify-between items-center">
+                  <span>Sales Tax ({pharmacySettings?.salesTaxPercent || 0}%):</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={salesTaxPercent}
+                      onChange={(e) => setSalesTaxPercent(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                      className="w-20 px-2 py-1 border rounded text-right"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                    />
+                    <span className="text-sm text-gray-500">%</span>
+                  </div>
+                </div>
+                {salesTaxPercent > 0 && (
+                  <div className="flex justify-between text-sm text-blue-600">
+                    <span>Tax Amount:</span>
+                    <span>+ PKR {calculateTax().toFixed(2)}</span>
+                  </div>
+                )}
+                
+                <div className="flex justify-between font-semibold text-lg border-t pt-2">
                   <span>Total:</span>
                   <span>PKR {calculateTotal().toFixed(2)}</span>
                 </div>
+                
+                {/* Show default settings indicator */}
+                {pharmacySettings && (pharmacySettings.billDiscountPercent > 0 || pharmacySettings.salesTaxPercent > 0) && (
+                  <div className="text-xs text-gray-400 italic">
+                    Using defaults from Settings
+                  </div>
+                )}
+                
                 <button
                   onClick={() => setShowPaymentModal(true)}
                   disabled={cart.length === 0}
@@ -854,17 +950,25 @@ export default function EnhancedPharmacyPOS() {
                 </select>
               </div>
               
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <div className="flex justify-between mb-2">
+              <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                <div className="flex justify-between">
                   <span>Subtotal:</span>
-                  <span>PKR {(calculateSubtotal() + Number(paymentCharge||0)).toFixed(2)}</span>
+                  <span>PKR {calculateSubtotal().toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between mb-2">
-                  <span>Discount:</span>
-                  <span>PKR {discount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between items-center mb-2">
-                  <span>Payment Charges (2% non-cash):</span>
+                {billDiscountPercent > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span>Bill Discount ({billDiscountPercent}%):</span>
+                    <span className="text-green-600">- PKR {discount.toFixed(2)}</span>
+                  </div>
+                )}
+                {salesTaxPercent > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span>Sales Tax ({salesTaxPercent}%):</span>
+                    <span className="text-blue-600">+ PKR {calculateTax().toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center">
+                  <span>Payment Charges:</span>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
@@ -877,7 +981,7 @@ export default function EnhancedPharmacyPOS() {
                     <button onClick={()=>setIsChargeManual(false)} className="text-xs text-blue-600 hover:underline">Auto</button>
                   </div>
                 </div>
-                <div className="flex justify-between font-semibold text-lg">
+                <div className="flex justify-between font-semibold text-lg border-t pt-2 mt-2">
                   <span>Total Amount:</span>
                   <span>PKR {calculateTotal().toFixed(2)}</span>
                 </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
-import { FiDollarSign, FiTrendingUp, FiTrendingDown, FiDownload, FiClipboard, FiShoppingCart, FiCalendar, FiPackage } from 'react-icons/fi'
+import { FiDollarSign, FiTrendingUp, FiTrendingDown, FiDownload, FiClipboard, FiShoppingCart, FiCalendar, FiPackage, FiAlertCircle, FiRefreshCw } from 'react-icons/fi'
 import { MdLocalPharmacy } from 'react-icons/md'
 import { TbMicroscope } from 'react-icons/tb'
 import { FaStethoscope } from 'react-icons/fa'
@@ -7,14 +7,37 @@ import { petsAPI, appointmentsAPI, financialsAPI, prescriptionsAPI, labReportsAP
 import DateRangePicker from '../../components/DateRangePicker'
 
 function toCSV(rows){
+  if (!rows || rows.length === 0) return ''
   const headers = Object.keys(rows[0] || {})
   const body = rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))
   return [headers.join(','), ...body].join('\n')
 }
 
+// Safe number parsing helper
+const toNum = (v) => {
+  if (v == null) return 0
+  const n = typeof v === 'string' ? Number(v.replace(/,/g, '')) : Number(v)
+  return Number.isNaN(n) ? 0 : n
+}
+
+// Safe date parsing helper
+const toDateStr = (d) => {
+  if (!d) return null
+  try {
+    const date = new Date(d)
+    if (isNaN(date.getTime())) return null
+    return date.toISOString().slice(0, 10)
+  } catch {
+    return null
+  }
+}
+
 export default function Financials(){
   const [range, setRange] = useState('Today')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [debugInfo, setDebugInfo] = useState({})
+  const [showDebug, setShowDebug] = useState(false)
   const [dateRange, setDateRange] = useState({
     fromDate: new Date().toISOString().slice(0,10),
     toDate: new Date().toISOString().slice(0,10)
@@ -42,87 +65,117 @@ export default function Financials(){
     
     try {
       setLoading(true)
+      setError(null)
+      const debug = {}
       
-      // Add timeout to API calls
-      const timeoutPromise = (promise) => Promise.race([
-        promise,
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('API timeout')), 2000)
-        )
+      const { fromDate, toDate } = dateRange
+      
+      // Helper to safely call API with individual error handling
+      const safeCall = async (apiFn, name, fallback = []) => {
+        try {
+          console.log(`[Financials] Loading ${name}...`)
+          const res = await apiFn()
+          const count = res?.data?.length || 0
+          console.log(`[Financials] ${name}: ${count} records`)
+          debug[name] = { success: true, count, error: null }
+          return res?.data || fallback
+        } catch (err) {
+          console.error(`[Financials] Error loading ${name}:`, err?.message || err)
+          debug[name] = { success: false, count: 0, error: err?.message || 'Unknown error' }
+          return fallback
+        }
+      }
+      
+      // Helper for date-range API calls
+      const safeDateRangeCall = async (apiFn, name, start, end, fallback = []) => {
+        try {
+          console.log(`[Financials] Loading ${name} for ${start} to ${end}...`)
+          const res = await apiFn(start, end)
+          const count = res?.data?.length || 0
+          console.log(`[Financials] ${name}: ${count} records`)
+          debug[name] = { success: true, count, dateRange: { start, end }, error: null }
+          return res?.data || fallback
+        } catch (err) {
+          console.error(`[Financials] Error loading ${name}:`, err?.message || err)
+          debug[name] = { success: false, count: 0, error: err?.message || 'Unknown error' }
+          return fallback
+        }
+      }
+      
+      // Load data with server-side date filtering where available
+      const [
+        petsData,
+        appointmentsData,
+        financialsData,
+        prescriptionsData,
+        labReportsData,
+        shopSalesData,
+        pharmacySalesData,
+        expensesData,
+        hospitalInventoryData,
+        proceduresData
+      ] = await Promise.all([
+        safeCall(petsAPI.getAll, 'pets'),
+        safeCall(appointmentsAPI.getAll, 'appointments'),
+        safeCall(financialsAPI.getAll, 'financials'),
+        safeCall(prescriptionsAPI.getAll, 'prescriptions'),
+        safeCall(labReportsAPI.getAll, 'labReports'),
+        // Use date-range endpoints where available
+        safeDateRangeCall(salesAPI.getByDateRange, 'shopSales', fromDate, toDate),
+        safeDateRangeCall(pharmacySalesAPI.getByDateRange, 'pharmacySales', fromDate, toDate),
+        safeDateRangeCall(expensesAPI.getByDateRange, 'expenses', fromDate, toDate),
+        safeCall(hospitalInventoryAPI.getAll, 'hospitalInventory'),
+        safeCall(() => proceduresAPI.getAll(''), 'procedures')
       ])
       
-      const [petsRes, apptsRes, financialsRes, prescriptionsRes, labReportsRes, shopSalesRes, pharmacySalesRes, expensesRes, hospitalInventoryRes, proceduresRes] = await Promise.all([
-        timeoutPromise(petsAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(appointmentsAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(financialsAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(prescriptionsAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(labReportsAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(salesAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(pharmacySalesAPI.getAll()).catch(() => ({ data: [] })),
-        timeoutPromise(expensesAPI.getAll()).catch(() => {
-          // Fallback to localStorage for expenses
-          try {
-            const stored = localStorage.getItem('admin_expenses')
-            return { data: stored ? JSON.parse(stored) : [] }
-          } catch (e) {
-            return { data: [] }
-          }
-        }),
-        timeoutPromise(hospitalInventoryAPI.getAll()).catch(() => {
-          // Fallback to localStorage for hospital inventory
-          try {
-            const stored = localStorage.getItem('hospital_inventory')
-            return { data: stored ? JSON.parse(stored) : [] }
-          } catch (e) {
-            return { data: [] }
-          }
-        }),
-        timeoutPromise(proceduresAPI.getAll('')).catch(() => ({ data: [] }))
-      ])
-      setPets(petsRes.data || [])
-      setAppointments(apptsRes.data || [])
-      setFinancials(financialsRes.data || [])
-      setPrescriptions(prescriptionsRes.data || [])
-      setLabReports(labReportsRes.data || [])
-      setShopSales(shopSalesRes.data || [])
-      setPharmacySales(pharmacySalesRes.data || [])
-      setExpenses(expensesRes.data || [])
-      setHospitalInventory(hospitalInventoryRes.data || [])
-      setProcedures(proceduresRes.data || [])
+      setPets(petsData)
+      setAppointments(appointmentsData)
+      setFinancials(financialsData)
+      setPrescriptions(prescriptionsData)
+      setLabReports(labReportsData)
+      setShopSales(shopSalesData)
+      setPharmacySales(pharmacySalesData)
+      setExpenses(expensesData)
+      setHospitalInventory(hospitalInventoryData)
+      setProcedures(proceduresData)
       
-      // Set loading to false immediately after data is set
-      setLoading(false)
+      setDebugInfo(debug)
     } catch (err) {
       console.error('Error loading financial data:', err)
+      setError(err?.message || 'Failed to load financial data')
     } finally {
       setLoading(false)
     }
   }
 
-  // Date filtering function
+  // Date filtering function with safe parsing
   const isDateInRange = (dateStr) => {
-    if (!dateStr) return false
-    const date = new Date(dateStr).toISOString().slice(0,10)
+    const date = toDateStr(dateStr)
+    if (!date) return false
     return date >= dateRange.fromDate && date <= dateRange.toDate
   }
 
-  // Filter all data by date range
+  // Filter all data by date range (with safe date handling)
   const filteredPets = pets.filter(p => isDateInRange(p.createdAt || p.when))
   const filteredAppointments = appointments.filter(a => isDateInRange(a.date || a.appointmentDate || a.createdAt))
   const filteredFinancials = financials.filter(f => isDateInRange(f.date || f.createdAt))
   const filteredPrescriptions = prescriptions.filter(p => isDateInRange(p.createdAt || p.when || p.date))
   const filteredLabReports = labReports.filter(r => isDateInRange(r.createdAt || r.reportDate || r.date))
-  const filteredShopSales = shopSales.filter(s => isDateInRange(s.createdAt || s.date))
-  const filteredPharmacySales = pharmacySales.filter(s => isDateInRange(s.createdAt || s.date))
-  const filteredExpenses = expenses.filter(e => isDateInRange(e.createdAt || e.date))
+  // Shop sales, pharmacy sales, and expenses are already server-side filtered
+  const filteredShopSales = shopSales
+  const filteredPharmacySales = pharmacySales
+  const filteredExpenses = expenses
+  // Hospital inventory filtered by purchase date
   const filteredHospitalInventory = hospitalInventory.filter(i => isDateInRange(i.purchaseDate || i.createdAt))
   const filteredProcedures = procedures.filter(p => isDateInRange(p.createdAt || p.date))
-  const proceduresSubtotal = filteredProcedures.reduce((sum, r) => sum + (Number(r.subtotal||0)), 0)
-  const proceduresReceived = filteredProcedures.reduce((sum, r) => sum + Math.max(0, Number(r.receivedAmount||0)), 0)
+  
+  // Procedures calculations with safe number handling
+  const proceduresSubtotal = filteredProcedures.reduce((sum, r) => sum + toNum(r.subtotal), 0)
+  const proceduresReceived = filteredProcedures.reduce((sum, r) => sum + Math.max(0, toNum(r.receivedAmount)), 0)
   const proceduresDue = filteredProcedures.reduce((sum, r) => {
-    const gt = (r.grandTotal!=null) ? Number(r.grandTotal) : (Number(r.subtotal||0) + Number(r.previousDues||0))
-    const paid = Number(r.receivedAmount||0)
-    const due = (r.receivable!=null) ? Number(r.receivable) : Math.max(0, gt - paid)
+    const gt = (r.grandTotal != null) ? toNum(r.grandTotal) : (toNum(r.subtotal) + toNum(r.previousDues))
+    const paid = toNum(r.receivedAmount)
+    const due = (r.receivable != null) ? toNum(r.receivable) : Math.max(0, gt - paid)
     return sum + Math.max(0, due)
   }, 0)
 
@@ -132,9 +185,9 @@ export default function Financials(){
       const date = r.createdAt || r.date || ''
       const items = Array.isArray(r.procedures) ? r.procedures : []
       const detail = `Procedures (${items.length}) - ${r.petName || ''}`
-      const gt = (r.grandTotal!=null) ? Number(r.grandTotal) : (Number(r.subtotal||0) + Number(r.previousDues||0))
-      const recv = Math.max(0, Number(r.receivedAmount||0))
-      const due = (r.receivable!=null) ? Number(r.receivable) : Math.max(0, gt - recv)
+      const gt = (r.grandTotal != null) ? toNum(r.grandTotal) : (toNum(r.subtotal) + toNum(r.previousDues))
+      const recv = Math.max(0, toNum(r.receivedAmount))
+      const due = (r.receivable != null) ? toNum(r.receivable) : Math.max(0, gt - recv)
       const rows = []
       if (recv > 0) rows.push({ portal: 'Procedures', date, detail, amount: recv, status: 'Paid' })
       if (due > 0) rows.push({ portal: 'Procedures', date, detail, amount: due, status: 'Pending' })
@@ -148,9 +201,9 @@ export default function Financials(){
 
   const receptionTx = useMemo(() => filteredPets.map(p => ({
     portal: 'Reception',
-    date: p.arrivalTime || '',
+    date: p.arrivalTime || p.createdAt || '',
     detail: p.purpose || 'Visit',
-    amount: Number(p?.payment?.amount || 0),
+    amount: toNum(p?.payment?.amount),
     status: p?.payment?.status || 'Pending'
   })), [filteredPets])
 
@@ -158,8 +211,7 @@ export default function Financials(){
   const receptionStats = useMemo(() => {
     // Get consultant fees from pets records
     const consultantFees = filteredPets.reduce((sum, pet) => {
-      const fees = parseFloat(pet.details?.clinic?.consultantFees) || 0
-      return sum + fees
+      return sum + toNum(pet.details?.clinic?.consultantFees)
     }, 0)
     
     // Count successful/completed appointments
@@ -172,7 +224,7 @@ export default function Financials(){
       successfulPatients: successfulPatients,
       totalTokens: filteredPets.length
     }
-  }, [filteredPets, filteredAppointments, filteredFinancials])
+  }, [filteredPets, filteredAppointments])
 
   // Calculate doctor statistics from filtered MongoDB data
   const doctorStats = useMemo(() => {
@@ -226,13 +278,19 @@ export default function Financials(){
   // Calculate shop statistics from filtered sales data
   const shopStats = useMemo(() => {
     const totalSales = filteredShopSales.length
-    const totalRevenue = filteredShopSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0)
+    const totalRevenue = filteredShopSales.reduce((sum, sale) => sum + toNum(sale.totalAmount), 0)
+    const totalReceived = filteredShopSales.reduce((sum, sale) => {
+      const total = toNum(sale.totalAmount)
+      const recv = toNum(sale.receivedAmount)
+      return sum + (recv > 0 ? Math.min(recv, total) : total)
+    }, 0)
     const totalItems = filteredShopSales.reduce((sum, sale) => sum + (sale.items?.length || 0), 0)
     const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0
     
     return {
       totalSales,
       totalRevenue,
+      totalReceived,
       totalItems,
       averageOrderValue
     }
@@ -241,10 +299,10 @@ export default function Financials(){
   // Hospital inventory statistics from filtered inventory data
   const hospitalInventoryStats = useMemo(() => {
     const totalItems = filteredHospitalInventory.length
-    const totalQuantity = filteredHospitalInventory.reduce((sum, item) => sum + (Number(item.quantity ?? 0)), 0)
+    const totalQuantity = filteredHospitalInventory.reduce((sum, item) => sum + toNum(item.quantity), 0)
     const totalValue = filteredHospitalInventory.reduce((sum, item) => {
-      const price = Number(item.price ?? item.purchasePrice ?? 0)
-      const qty = Number(item.quantity ?? 0)
+      const price = toNum(item.price ?? item.purchasePrice)
+      const qty = toNum(item.quantity)
       return sum + (price * qty)
     }, 0)
     const avgValuePerItem = totalItems > 0 ? totalValue / totalItems : 0
@@ -259,10 +317,11 @@ export default function Financials(){
 
   const hospitalInventoryExportRows = useMemo(() => {
     return filteredHospitalInventory.map(item => {
-      const price = Number(item.price ?? item.purchasePrice ?? 0)
-      const quantity = Number(item.quantity ?? 0)
+      const price = toNum(item.price ?? item.purchasePrice)
+      const quantity = toNum(item.quantity)
+      const dateStr = toDateStr(item.purchaseDate || item.createdAt)
       return {
-        Date: (item.purchaseDate || item.createdAt || '').slice(0, 10),
+        Date: dateStr || '',
         ItemName: item.itemName || '',
         Category: item.category || '',
         Quantity: quantity,
@@ -284,7 +343,7 @@ export default function Financials(){
       portal: 'Shop',
       date: sale.createdAt || '',
       detail: `Invoice ${sale.invoiceNumber} - ${sale.customerName || 'Walk-in'} (${sale.items?.length || 0} items)`,
-      amount: parseFloat(sale.totalAmount) || 0,
+      amount: toNum(sale.totalAmount),
       status: 'Paid', // Sales are always paid in POS
       invoiceNumber: sale.invoiceNumber,
       customerName: sale.customerName,
@@ -296,7 +355,7 @@ export default function Financials(){
       portal: 'Shop',
       date: f.date || f.createdAt || '',
       detail: f.description || f.item || 'Sale',
-      amount: parseFloat(f.amount || f.total) || 0,
+      amount: toNum(f.amount || f.total),
       status: f.status || 'Pending'
     }))
     
@@ -306,13 +365,21 @@ export default function Financials(){
   // Calculate pharmacy statistics from filtered sales data
   const pharmacyStats = useMemo(() => {
     const totalSales = filteredPharmacySales.length
-    const totalRevenue = filteredPharmacySales.reduce((sum, sale) => sum + Math.max(0, Number(sale.receivedAmount ?? sale.totalAmount ?? 0)), 0)
-    const totalPending = filteredPharmacySales.reduce((sum, sale) => {
-      const total = Math.max(0, Number(sale.totalAmount ?? 0))
-      const recv = Math.max(0, Number(sale.receivedAmount ?? sale.totalAmount ?? 0))
-      return sum + Math.max(0, total - Math.min(recv, total))
-    }, 0)
-    const totalItems = filteredPharmacySales.reduce((sum, sale) => sum + (sale.items?.length || 0), 0)
+    let totalRevenue = 0
+    let totalPending = 0
+    let totalItems = 0
+    
+    filteredPharmacySales.forEach(sale => {
+      const total = toNum(sale.totalAmount)
+      const recv = toNum(sale.receivedAmount)
+      const actualReceived = recv > 0 ? Math.min(recv, total) : total
+      const pending = Math.max(0, total - actualReceived)
+      
+      totalRevenue += actualReceived
+      totalPending += pending
+      totalItems += (sale.items?.length || 0)
+    })
+    
     const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0
     
     return {
@@ -328,9 +395,10 @@ export default function Financials(){
     // Pharmacy sales can be partially paid; split into Paid and Pending rows
     const salesTx = filteredPharmacySales.flatMap(sale => {
       const date = sale.createdAt || ''
-      const total = Math.max(0, Number(sale.totalAmount ?? 0))
-      const recv = Math.max(0, Number(sale.receivedAmount ?? sale.totalAmount ?? 0))
-      const due = Math.max(0, total - Math.min(recv, total))
+      const total = Math.max(0, toNum(sale.totalAmount))
+      const recv = Math.max(0, toNum(sale.receivedAmount))
+      const actualReceived = recv > 0 ? Math.min(recv, total) : total
+      const due = Math.max(0, total - actualReceived)
       const detail = `Invoice ${sale.invoiceNumber} - ${sale.customerName || 'Walk-in'} (${sale.items?.length || 0} medicines)`
       const common = {
         portal: 'Pharmacy',
@@ -341,7 +409,7 @@ export default function Financials(){
         items: sale.items
       }
       const rows = []
-      if (recv > 0) rows.push({ ...common, amount: recv, status: 'Paid' })
+      if (actualReceived > 0) rows.push({ ...common, amount: actualReceived, status: 'Paid' })
       if (due > 0) rows.push({ ...common, amount: due, status: 'Pending' })
       return rows
     })
@@ -351,23 +419,23 @@ export default function Financials(){
       portal: 'Pharmacy',
       date: f.date || f.createdAt || '',
       detail: f.description || f.medicine || 'Medicine',
-      amount: parseFloat(f.amount || f.total) || 0,
+      amount: toNum(f.amount || f.total),
       status: f.status || 'Pending'
     }))
     
     return [...salesTx, ...financialPharmacyTx]
-  }, [filteredPharmacySales, filteredFinancials])
+  }, [filteredPharmacySales, financials])
 
   const labTx = useMemo(() => {
     // Get lab reports directly from filtered labReports collection
     const labReportTx = filteredLabReports.map(r => ({
       portal: 'Lab',
       date: r.date || r.reportDate || r.createdAt || '',
-      detail: `${r.testName || r.testType || 'Test'} - ${r.petName}`,
+      detail: `${r.testName || r.testType || 'Test'} - ${r.petName || 'Unknown'}`,
       petName: r.petName,
       ownerName: r.ownerName,
       testName: r.testName || r.testType,
-      amount: parseFloat(r.amount) || 0,
+      amount: toNum(r.amount),
       status: r.paymentStatus || 'Pending',
       reportNumber: r.reportNumber || r.id
     }))
@@ -377,16 +445,16 @@ export default function Financials(){
       portal: 'Lab',
       date: f.date || f.createdAt || '',
       detail: f.description || f.testName || 'Test',
-      amount: parseFloat(f.amount || f.total) || 0,
+      amount: toNum(f.amount || f.total),
       status: f.status || 'Pending'
     }))
     
     return [...labReportTx, ...financialLabTx]
   }, [filteredLabReports, filteredFinancials])
 
-  // Metrics
-  const sumPaid = rows => rows.filter(r=>r.status==='Paid').reduce((s,r)=>s + (r.amount||0), 0)
-  const sumPending = rows => rows.filter(r=>r.status!=='Paid').reduce((s,r)=>s + (r.amount||0), 0)
+  // Metrics helpers
+  const sumPaid = rows => rows.filter(r => r.status === 'Paid').reduce((s, r) => s + toNum(r.amount), 0)
+  const sumPending = rows => rows.filter(r => r.status !== 'Paid').reduce((s, r) => s + toNum(r.amount), 0)
 
   const receptionPaid = sumPaid(receptionTx)
   const receptionPending = sumPending(receptionTx)
@@ -404,20 +472,24 @@ export default function Financials(){
   const proceduresPaid = sumPaid(proceduresTx)
   const proceduresPending = sumPending(proceduresTx)
 
+  // Calculate total revenue (only from Paid amounts)
   const totalRevenue = receptionPaid + shopPaid + pharmacyPaid + labPaid + proceduresPaid
   const totalPending = receptionPending + shopPending + pharmacyPending + labPending + proceduresPending
-  const totalExpense = filteredExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0) + inventoryExpense
+  
+  // Calculate expenses with safe number handling
+  const expensesTotal = filteredExpenses.reduce((sum, exp) => sum + toNum(exp.amount), 0)
+  const totalExpense = expensesTotal + inventoryExpense
   const netProfit = totalRevenue - totalExpense
   
   // Calculate expenses by portal using filtered data
   const expensesByPortal = useMemo(() => ({
-    reception: filteredExpenses.filter(e => e.portal === 'reception').reduce((sum, e) => sum + (e.amount || 0), 0),
-    doctor: filteredExpenses.filter(e => e.portal === 'doctor').reduce((sum, e) => sum + (e.amount || 0), 0),
-    pharmacy: filteredExpenses.filter(e => e.portal === 'pharmacy').reduce((sum, e) => sum + (e.amount || 0), 0),
-    lab: filteredExpenses.filter(e => e.portal === 'lab').reduce((sum, e) => sum + (e.amount || 0), 0),
-    shop: filteredExpenses.filter(e => e.portal === 'shop').reduce((sum, e) => sum + (e.amount || 0), 0),
+    reception: filteredExpenses.filter(e => e.portal === 'reception').reduce((sum, e) => sum + toNum(e.amount), 0),
+    doctor: filteredExpenses.filter(e => e.portal === 'doctor').reduce((sum, e) => sum + toNum(e.amount), 0),
+    pharmacy: filteredExpenses.filter(e => e.portal === 'pharmacy').reduce((sum, e) => sum + toNum(e.amount), 0),
+    lab: filteredExpenses.filter(e => e.portal === 'lab').reduce((sum, e) => sum + toNum(e.amount), 0),
+    shop: filteredExpenses.filter(e => e.portal === 'shop').reduce((sum, e) => sum + toNum(e.amount), 0),
     // Admin expenses include normal admin expenses plus hospital inventory purchases
-    admin: filteredExpenses.filter(e => e.portal === 'admin').reduce((sum, e) => sum + (e.amount || 0), 0) + inventoryExpense,
+    admin: filteredExpenses.filter(e => e.portal === 'admin').reduce((sum, e) => sum + toNum(e.amount), 0) + inventoryExpense,
   }), [filteredExpenses, inventoryExpense])
 
   const allTx = [...receptionTx, ...shopTx, ...pharmacyTx, ...labTx, ...proceduresTx]
@@ -435,12 +507,7 @@ export default function Financials(){
     lines.push('"Transactions"')
     lines.push(transactionHeaders.join(','))
 
-    const normalizeDate = (d) => {
-      if (!d) return ''
-      const dt = new Date(d)
-      if (isNaN(dt.getTime())) return ''
-      return dt.toISOString().slice(0,10)
-    }
+    const normalizeDate = (d) => toDateStr(d) || ''
 
     // Income rows by portal
     receptionTx.forEach(tx => addTxRow({
@@ -593,9 +660,22 @@ export default function Financials(){
   const isToday = selectedDate === new Date().toISOString().slice(0,10)
   
   const formatDate = (dateStr) => {
-    const date = new Date(dateStr)
-    return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    const date = toDateStr(dateStr)
+    if (!date) return 'Invalid Date'
+    return new Date(date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   }
+  
+  // Data summary for display
+  const dataSummary = useMemo(() => ({
+    pets: filteredPets.length,
+    appointments: filteredAppointments.length,
+    prescriptions: filteredPrescriptions.length,
+    labReports: filteredLabReports.length,
+    shopSales: filteredShopSales.length,
+    pharmacySales: filteredPharmacySales.length,
+    expenses: filteredExpenses.length,
+    procedures: filteredProcedures.length
+  }), [filteredPets, filteredAppointments, filteredPrescriptions, filteredLabReports, filteredShopSales, filteredPharmacySales, filteredExpenses, filteredProcedures])
 
   return (
     <div className="space-y-8">
@@ -631,6 +711,14 @@ export default function Financials(){
               showAllButton={true}
             />
             
+            <button 
+              onClick={loadAllData}
+              disabled={loading}
+              className="px-4 py-3 rounded-xl bg-slate-600 hover:bg-slate-700 text-white shadow-lg font-semibold transition-all duration-200 flex items-center gap-2 disabled:opacity-50"
+            >
+              <FiRefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+            
             <button onClick={()=>exportCSV(allTx,'financials-summary')} className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-lg font-semibold transition-all duration-200 flex items-center gap-2">
               <FiDownload className="w-4 h-4" /> Export CSV
             </button>
@@ -638,10 +726,51 @@ export default function Financials(){
         </div>
       </div>
 
+      {/* Error Display */}
+      {error && (
+        <div className="rounded-2xl bg-red-50 border border-red-200 p-4 flex items-center gap-3">
+          <FiAlertCircle className="w-6 h-6 text-red-600" />
+          <div className="flex-1">
+            <div className="font-semibold text-red-800">Error loading data</div>
+            <div className="text-sm text-red-600">{error}</div>
+          </div>
+          <button 
+            onClick={loadAllData}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center gap-2"
+          >
+            <FiRefreshCw className="w-4 h-4" /> Retry
+          </button>
+        </div>
+      )}
+
+      {/* Debug Panel Toggle */}
+      <div className="flex justify-end">
+        <button 
+          onClick={() => setShowDebug(!showDebug)}
+          className="text-xs text-slate-500 hover:text-slate-700 underline"
+        >
+          {showDebug ? 'Hide Debug Info' : 'Show Debug Info'}
+        </button>
+      </div>
+
+      {/* Debug Panel */}
+      {showDebug && (
+        <div className="rounded-2xl bg-slate-100 border border-slate-200 p-4">
+          <div className="text-sm font-semibold text-slate-700 mb-2">Debug Information</div>
+          <pre className="text-xs text-slate-600 overflow-auto max-h-48">
+            {JSON.stringify(debugInfo, null, 2)}
+          </pre>
+          <div className="mt-2 text-xs text-slate-500">
+            Data loaded for: {dateRange.fromDate} to {dateRange.toDate}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
           <div className="text-slate-500 font-medium">Loading financial data...</div>
+          <div className="text-xs text-slate-400 mt-2">Fetching data from all portals</div>
         </div>
       ) : (
       <>
@@ -652,7 +781,7 @@ export default function Financials(){
             <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
               <FiTrendingUp className="h-6 w-6 text-white" />
             </div>
-            <div className="text-xs font-semibold text-green-600 bg-green-100 px-2 py-1 rounded-full">+15%</div>
+            <div className="text-xs font-semibold text-green-600 bg-green-100 px-2 py-1 rounded-full">Revenue</div>
           </div>
           <div>
             <div className="text-sm font-medium text-slate-600 mb-1">Total Revenue</div>
@@ -664,6 +793,7 @@ export default function Financials(){
             <div className="w-12 h-12 bg-amber-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
               <FiDollarSign className="h-6 w-6 text-white" />
             </div>
+            <div className="text-xs font-semibold text-amber-600 bg-amber-100 px-2 py-1 rounded-full">Pending</div>
           </div>
           <div>
             <div className="text-sm font-medium text-slate-600 mb-1">Total Pending</div>
@@ -675,6 +805,7 @@ export default function Financials(){
             <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
               <FiTrendingDown className="h-6 w-6 text-white" />
             </div>
+            <div className="text-xs font-semibold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Expense</div>
           </div>
           <div>
             <div className="text-sm font-medium text-slate-600 mb-1">Total Expense</div>
@@ -686,11 +817,54 @@ export default function Financials(){
             <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
               <FiDollarSign className="h-6 w-6 text-white" />
             </div>
-            <div className="text-xs font-semibold text-indigo-600 bg-indigo-100 px-2 py-1 rounded-full">Profit</div>
+            <div className={`text-xs font-semibold px-2 py-1 rounded-full ${netProfit >= 0 ? 'text-emerald-600 bg-emerald-100' : 'text-red-600 bg-red-100'}`}>
+              {netProfit >= 0 ? 'Profit' : 'Loss'}
+            </div>
           </div>
           <div>
-            <div className="text-sm font-medium text-slate-600 mb-1">Net Profit</div>
-            <div className="text-3xl font-bold text-slate-900">Rs. {netProfit.toLocaleString()}</div>
+            <div className="text-sm font-medium text-slate-600 mb-1">Net {netProfit >= 0 ? 'Profit' : 'Loss'}</div>
+            <div className={`text-3xl font-bold ${netProfit >= 0 ? 'text-slate-900' : 'text-red-600'}`}>
+              Rs. {Math.abs(netProfit).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Data Summary - Record Counts */}
+      <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+        <div className="text-sm font-semibold text-slate-700 mb-3">Records Loaded for Selected Date Range</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-3 text-center">
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-indigo-600">{dataSummary.pets}</div>
+            <div className="text-xs text-slate-500">Pets</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-blue-600">{dataSummary.appointments}</div>
+            <div className="text-xs text-slate-500">Appts</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-emerald-600">{dataSummary.shopSales}</div>
+            <div className="text-xs text-slate-500">Shop</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-sky-600">{dataSummary.pharmacySales}</div>
+            <div className="text-xs text-slate-500">Pharmacy</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-teal-600">{dataSummary.labReports}</div>
+            <div className="text-xs text-slate-500">Lab</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-purple-600">{dataSummary.prescriptions}</div>
+            <div className="text-xs text-slate-500">Rx</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-orange-600">{dataSummary.procedures}</div>
+            <div className="text-xs text-slate-500">Procs</div>
+          </div>
+          <div className="bg-white rounded-lg p-2 shadow-sm">
+            <div className="text-lg font-bold text-red-600">{dataSummary.expenses}</div>
+            <div className="text-xs text-slate-500">Exp</div>
           </div>
         </div>
       </div>

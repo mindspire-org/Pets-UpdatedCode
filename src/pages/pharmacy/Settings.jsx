@@ -1,12 +1,89 @@
-﻿import React, { useState } from 'react'
-import { FiDownload, FiUpload, FiTrash2, FiAlertTriangle, FiDatabase, FiSettings } from 'react-icons/fi'
-import { backupAPI } from '../../services/api'
+﻿import React, { useState, useEffect } from 'react'
+import { FiDownload, FiUpload, FiTrash2, FiAlertTriangle, FiDatabase, FiSettings, FiSave, FiUploadCloud } from 'react-icons/fi'
+import { backupAPI, pharmacySettingsAPI } from '../../services/api'
+import { useSettings } from '../../context/SettingsContext'
 
 export default function PharmacySettings() {
+  const { refresh } = useSettings()
   const [importFile, setImportFile] = useState(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [confirmDialog, setConfirmDialog] = useState({ show: false, title: '', message: '', onConfirm: null })
+
+  // New settings state
+  const [pharmacySettings, setPharmacySettings] = useState({
+    pharmacyName: '',
+    phone: '',
+    address: '',
+    email: '',
+    billingFooter: '',
+    companyLogo: '',
+    billDiscountPercent: 0,
+    salesTaxPercent: 0
+  })
+
+  useEffect(() => {
+    fetchSettings()
+  }, [])
+
+  const fetchSettings = async () => {
+    try {
+      // Use pharmacySettingsAPI to get shared pharmacy settings
+      const res = await pharmacySettingsAPI.get()
+      if (res.data) {
+        setPharmacySettings({
+          pharmacyName: res.data.pharmacyName || '',
+          phone: res.data.phone || '',
+          address: res.data.address || '',
+          email: res.data.email || '',
+          billingFooter: res.data.billingFooter || '',
+          companyLogo: res.data.companyLogo || '',
+          billDiscountPercent: res.data.billDiscountPercent || 0,
+          salesTaxPercent: res.data.salesTaxPercent || 0
+        })
+      }
+    } catch (e) {
+      console.error('Failed to fetch settings:', e)
+    }
+  }
+
+  const handleSaveSettings = async (e) => {
+    e.preventDefault()
+    try {
+      setBusy(true)
+      const auth = JSON.parse(localStorage.getItem('pharmacy_auth') || '{}')
+      const username = auth.username || 'system'
+      
+      // Use pharmacySettingsAPI to save shared settings
+      const payload = {
+        ...pharmacySettings,
+        updatedBy: username
+      }
+      
+      await pharmacySettingsAPI.save(payload)
+      
+      // Immediately refresh global settings to update header
+      await refresh()
+      
+      setMessage('Settings saved successfully.')
+      setTimeout(() => setMessage(''), 3000)
+    } catch (e) {
+      setMessage('Error: Failed to save settings')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleLogoChange = (e) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setPharmacySettings(prev => ({ ...prev, companyLogo: reader.result }))
+      }
+      reader.readAsDataURL(file)
+    }
+  }
 
   const pickPharmacyOnly = (data) => {
     if (!data) return { pharmacyMedicines: [], pharmacyPurchases: [], pharmacySales: [], pharmacyDues: [] }
@@ -171,6 +248,149 @@ export default function PharmacySettings() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600 flex items-center gap-2">
         <FiDatabase className="text-slate-400"/> Scope: Pharmacy collections only (Medicines, Purchases, Sales, Dues). Export/Import works with JSON files produced here.
+      </div>
+
+      {/* Database Driven Settings Form */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <h2 className="text-lg font-bold text-slate-800">Pharmacy Details</h2>
+          <p className="text-xs text-slate-500 font-medium">Configure your pharmacy information for invoices and reports</p>
+        </div>
+        <form onSubmit={handleSaveSettings} className="p-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pharmacy Name</label>
+              <input 
+                type="text" 
+                value={pharmacySettings.pharmacyName}
+                onChange={(e) => setPharmacySettings({...pharmacySettings, pharmacyName: e.target.value})}
+                placeholder="Abbottabad Pet Hospital Pharmacy"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Phone Number</label>
+              <input 
+                type="text" 
+                value={pharmacySettings.phone}
+                onChange={(e) => setPharmacySettings({...pharmacySettings, phone: e.target.value})}
+                placeholder="+92-21-1234567"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pharmacy Address</label>
+            <textarea 
+              rows="3"
+              value={pharmacySettings.address}
+              onChange={(e) => setPharmacySettings({...pharmacySettings, address: e.target.value})}
+              placeholder="Enter full pharmacy address..."
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all resize-none"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email Address</label>
+            <input 
+              type="email" 
+              value={pharmacySettings.email}
+              onChange={(e) => setPharmacySettings({...pharmacySettings, email: e.target.value})}
+              placeholder="pharmacy@hospital.com"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Billing Footer</label>
+            <textarea 
+              rows="3"
+              value={pharmacySettings.billingFooter}
+              onChange={(e) => setPharmacySettings({...pharmacySettings, billingFooter: e.target.value})}
+              placeholder="Terms and conditions or footer message for invoices..."
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all resize-none"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pharmacy Logo</label>
+            <div className="flex items-center gap-4">
+              {pharmacySettings.companyLogo && (
+                <div className="w-16 h-16 rounded-xl border-2 border-slate-100 p-1 bg-white shrink-0 shadow-sm">
+                  <img src={pharmacySettings.companyLogo} alt="Logo Preview" className="w-full h-full object-contain" />
+                </div>
+              )}
+              <div className="relative flex-1">
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  onChange={handleLogoChange}
+                  className="hidden" 
+                  id="logo-upload"
+                />
+                <label 
+                  htmlFor="logo-upload"
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-dashed border-slate-200 rounded-xl text-slate-500 hover:border-purple-400 hover:text-purple-600 cursor-pointer transition-all bg-slate-50 group"
+                >
+                  <FiUploadCloud className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-sm">Choose Logo File</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Default Bill Settings */}
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-sm font-bold text-slate-700 mb-4">Default Bill Settings (POS)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Bill Discount (%)</label>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={pharmacySettings.billDiscountPercent}
+                    onChange={(e) => setPharmacySettings({...pharmacySettings, billDiscountPercent: parseFloat(e.target.value) || 0})}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all pr-10"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">%</span>
+                </div>
+                <p className="text-xs text-slate-400">Default discount percentage applied to bills in POS</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sales Tax (%)</label>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={pharmacySettings.salesTaxPercent}
+                    onChange={(e) => setPharmacySettings({...pharmacySettings, salesTaxPercent: parseFloat(e.target.value) || 0})}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-purple-500 focus:ring-0 outline-none transition-all pr-10"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">%</span>
+                </div>
+                <p className="text-xs text-slate-400">Default sales tax percentage applied to bills in POS</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 flex justify-end">
+            <button 
+              type="submit"
+              disabled={busy}
+              className="flex items-center gap-2 px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all active:scale-95 shadow-lg shadow-slate-200 disabled:opacity-50"
+            >
+              <FiSave className={busy ? 'animate-spin' : ''} /> Save Settings
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )

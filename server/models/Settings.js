@@ -52,9 +52,29 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: 'PKR'
   },
+  billingFooter: {
+    type: String,
+    default: ''
+  },
+  pharmacyName: {
+    type: String,
+    default: ''
+  },
   timezone: {
     type: String,
     default: 'Asia/Karachi'
+  },
+  billDiscountPercent: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100
+  },
+  salesTaxPercent: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100
   },
   customSettings: {
     type: mongoose.Schema.Types.Mixed,

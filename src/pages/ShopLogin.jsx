@@ -25,7 +25,8 @@ export default function ShopLogin() {
           localStorage.setItem('shop_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role
+            role: user.role,
+            sidebarPermissions: user.sidebarPermissions || {}
           }))
           try { addActivity({ user: 'Shop', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/shop')

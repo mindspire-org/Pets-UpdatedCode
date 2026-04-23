@@ -54,6 +54,7 @@ import Inventory from "./pages/admin/Inventory";
 import HospitalInventory from "./pages/admin/HospitalInventory";
 import Logs from "./pages/admin/Logs";
 import Settings from "./pages/admin/Settings";
+import SidebarPermissions from "./pages/admin/SidebarPermissions";
 import FinanceAndCenter from "./pages/admin/FinanceAndCenter";
 import DaySessions from "./pages/admin/DaySessions";
 import Receivables from "./pages/admin/Receivables";
@@ -99,10 +100,19 @@ import PharmacySettings from "./pages/pharmacy/Settings";
 import PharmacyReferrals from "./pages/pharmacy/Referrals";
 import SalesHistory from "./pages/pharmacy/SalesHistory";
 import PurchaseHistory from "./pages/pharmacy/PurchaseHistory";
-import CustomerReturns from "./pages/pharmacy/CustomerReturns";
 import SupplierReturns from "./pages/pharmacy/SupplierReturns";
+import PharmacyCompanies from "./pages/pharmacy/Companies";
+import AddInvoice from "./pages/pharmacy/AddInvoice";
+import CreditCustomers from "./pages/pharmacy/CreditCustomers";
+import SalesReturn from "./pages/pharmacy/SalesReturn";
+import ReturnHistory from "./pages/pharmacy/ReturnHistory";
+import PharmacyNotifications from "./pages/pharmacy/Notifications";
+import PharmacyAuditLogs from "./pages/pharmacy/AuditLogs";
+import PharmacyExpenses from "./pages/pharmacy/Expenses";
+import PharmacyPurchaseOrders from "./pages/pharmacy/PurchaseOrders";
 
-const router = createHashRouter([
+const router = createHashRouter(
+  [
   {
     path: "/",
     element: <App />,
@@ -133,6 +143,7 @@ const router = createHashRouter([
         children: [
           { index: true, element: <Dashboard /> },
           { path: "users", element: <Users /> },
+          { path: "sidebar-permissions", element: <SidebarPermissions /> },
           { path: "doctors", element: <Doctors /> },
           { path: "pets", element: <Pets /> },
           { path: "clients", element: <Clients /> },
@@ -235,15 +246,28 @@ const router = createHashRouter([
           { path: "pos", element: <PharmacyPOS /> },
           { path: "sales-history", element: <SalesHistory /> },
           { path: "purchase-history", element: <PurchaseHistory /> },
-          { path: "customer-returns", element: <CustomerReturns /> },
           { path: "supplier-returns", element: <SupplierReturns /> },
+          { path: "companies", element: <PharmacyCompanies /> },
+          { path: "add-invoice", element: <AddInvoice /> },
+          { path: "credit-customers", element: <CreditCustomers /> },
+          { path: "sales-return", element: <SalesReturn /> },
+          { path: "return-history", element: <ReturnHistory /> },
           { path: "reports", element: <PharmacyReports /> },
+          { path: "notifications", element: <PharmacyNotifications /> },
+          { path: "audit-logs", element: <PharmacyAuditLogs /> },
+          { path: "expenses", element: <PharmacyExpenses /> },
+          { path: "purchase-orders", element: <PharmacyPurchaseOrders /> },
           { path: "settings", element: <PharmacySettings /> },
         ],
       },
     ],
   },
-]);
+],
+{
+  future: {
+    v7_startTransition: true,
+  },
+});
 
 createRoot(document.getElementById("app")).render(
   <React.StrictMode>

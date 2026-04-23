@@ -1,4 +1,5 @@
 // API Service Layer - Replaces localStorage with MongoDB API calls
+// Updated: Added pharmacySettingsAPI for shared pharmacy settings
 
 const DEFAULT_API_BASE_URL = "http://localhost:3001/api";
 const envApiBase = (import.meta.env.VITE_API_URL || "")
@@ -68,7 +69,14 @@ export const usersAPI = {
   login: (credentials) => apiCall("/users/login", "POST", credentials),
   update: (username, userData) =>
     apiCall(`/users/${username}`, "PUT", userData),
+  updatePermissions: (username, sidebarPermissions) =>
+    apiCall(`/users/${username}/permissions`, "PUT", { sidebarPermissions }),
   delete: (username) => apiCall(`/users/${username}`, "DELETE"),
+};
+
+export const sidebarConfigAPI = {
+  getAll: () => apiCall("/sidebar-config"),
+  getByPortalId: (portalId) => apiCall(`/sidebar-config/${portalId}`),
 };
 
 // Pets API
@@ -192,6 +200,14 @@ export const settingsAPI = {
   save: (settingsData) => apiCall("/settings", "POST", settingsData),
   update: (userId, settingsData) =>
     apiCall(`/settings/${userId}`, "PUT", settingsData),
+};
+
+// Pharmacy Settings API - Shared settings for all pharmacy users
+export const pharmacySettingsAPI = {
+  get: () => apiCall("/pharmacy-settings"),
+  getDefaults: () => apiCall("/pharmacy-settings/defaults"),
+  save: (settingsData) => apiCall("/pharmacy-settings", "POST", settingsData),
+  update: (settingsData) => apiCall("/pharmacy-settings", "PUT", settingsData),
 };
 
 // Backup API - full system export/import
@@ -356,11 +372,37 @@ export const pharmacyDuesAPI = {
     apiCall(`/pharmacy/dues/${clientId}`, "PUT", data),
 };
 
+// Pharmacy Credit Customers API
+export const pharmacyCreditCustomersAPI = {
+  getAll: () => apiCall("/pharmacy/credit-customers"),
+  getById: (id) => apiCall(`/pharmacy/credit-customers/${id}`),
+  create: (data) => apiCall("/pharmacy/credit-customers", "POST", data),
+  update: (id, data) => apiCall(`/pharmacy/credit-customers/${id}`, "PUT", data),
+  pay: (id, amount, notes, invoiceNumber, receiptPayAmounts) => apiCall(`/pharmacy/credit-customers/${id}/pay`, "POST", { amount, notes, invoiceNumber, receiptPayAmounts }),
+  getSales: (id) => apiCall(`/pharmacy/credit-customers/${id}/sales`),
+  getPaymentHistory: (id) => apiCall(`/pharmacy/credit-customers/${id}/payment-history`),
+  delete: (id) => apiCall(`/pharmacy/credit-customers/${id}`, "DELETE"),
+};
+
 export const pharmacyReportsAPI = {
   getDailySales: (date) => apiCall(`/pharmacy/reports/daily-sales/${date}`),
   getMonthlySales: (year, month) =>
     apiCall(`/pharmacy/reports/monthly-sales/${year}/${month}`),
   getInventorySummary: () => apiCall("/pharmacy/reports/inventory-summary"),
+};
+
+export const holdBillsAPI = {
+  getAll: () => apiCall("/hold-bills"),
+  getById: (id) => apiCall(`/hold-bills/${id}`),
+  create: (data) => apiCall("/hold-bills", "POST", data),
+  delete: (id) => apiCall(`/hold-bills/${id}`, "DELETE"),
+};
+
+export const holdInvoicesAPI = {
+  getAll: () => apiCall("/hold-invoices"),
+  getById: (id) => apiCall(`/hold-invoices/${id}`),
+  create: (data) => apiCall("/hold-invoices", "POST", data),
+  delete: (id) => apiCall(`/hold-invoices/${id}`, "DELETE"),
 };
 
 // Pharmacy History API
@@ -464,9 +506,11 @@ export const salesAPI = {
 
 // Suppliers API
 export const suppliersAPI = {
-  getAll: (portal = "") => {
-    const qs =
-      portal && portal !== "all" ? `?portal=${encodeURIComponent(portal)}` : "";
+  getAll: (portal = "", status = "") => {
+    const q = [];
+    if (portal && portal !== "all") q.push(`portal=${encodeURIComponent(portal)}`);
+    if (status) q.push(`status=${encodeURIComponent(status)}`);
+    const qs = q.length ? `?${q.join("&")}` : "";
     return apiCall(`/suppliers${qs}`);
   },
   getById: (id) => apiCall(`/suppliers/${id}`),
@@ -485,6 +529,8 @@ export const suppliersAPI = {
   deletePurchase: (id, purchaseId) =>
     apiCall(`/suppliers/${id}/purchase/${purchaseId}`, "DELETE"),
   addPayment: (id, data) => apiCall(`/suppliers/${id}/payment`, "POST", data),
+  getPharmacyInvoices: (id) => apiCall(`/suppliers/${id}/pharmacy-invoices`),
+  getPharmacyItems: (id) => apiCall(`/suppliers/${id}/pharmacy-items`),
 };
 
 // Shop Customers API
@@ -806,6 +852,15 @@ export const vouchersAPI = {
   delete: (id) => apiCall(`/vouchers/${encodeURIComponent(id)}`, "DELETE"),
 };
 
+// Purchase Orders API
+export const purchaseOrdersAPI = {
+  getAll: () => apiCall("/purchase-orders"),
+  getById: (id) => apiCall(`/purchase-orders/${id}`),
+  create: (data) => apiCall("/purchase-orders", "POST", data),
+  update: (id, data) => apiCall(`/purchase-orders/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/purchase-orders/${id}`, "DELETE"),
+};
+
 // Budget Planner API
 export const budgetsAPI = {
   get: ({ fiscalYear, branch = "all", project = "all" } = {}) => {
@@ -830,6 +885,63 @@ export const medicalFormsAPI = {
   delete: (id) => apiCall(`/medical-forms/${id}`, "DELETE"),
 };
 
+// Pharmacy Invoices API
+export const pharmacyInvoicesAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/pharmacy-invoices${q ? `?${q}` : ""}`);
+  },
+  getById: (id) => apiCall(`/pharmacy-invoices/${id}`),
+  create: (data) => apiCall("/pharmacy-invoices", "POST", data),
+  update: (id, data) => apiCall(`/pharmacy-invoices/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/pharmacy-invoices/${id}`, "DELETE"),
+};
+
+// Pharmacy Purchase Drafts API
+export const pharmacyPurchaseDraftsAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/pharmacy-purchase-drafts${q ? `?${q}` : ""}`);
+  },
+  getById: (id) => apiCall(`/pharmacy-purchase-drafts/${id}`),
+  create: (data) => apiCall("/pharmacy-purchase-drafts", "POST", data),
+  update: (id, data) => apiCall(`/pharmacy-purchase-drafts/${id}`, "PUT", data),
+  // Whole-invoice actions
+  approve: (id, reviewData) => apiCall(`/pharmacy-purchase-drafts/${id}/approve`, "POST", reviewData),
+  reject:  (id, reviewData) => apiCall(`/pharmacy-purchase-drafts/${id}/reject`,  "POST", reviewData),
+  // Per-item actions
+  approveItem: (draftId, itemId, reviewData) =>
+    apiCall(`/pharmacy-purchase-drafts/${draftId}/items/${itemId}/approve`, "POST", reviewData),
+  rejectItem: (draftId, itemId, reviewData) =>
+    apiCall(`/pharmacy-purchase-drafts/${draftId}/items/${itemId}/reject`,  "POST", reviewData),
+  delete: (id) => apiCall(`/pharmacy-purchase-drafts/${id}`, "DELETE"),
+  getStats: (portal = "pharmacy") =>
+    apiCall(`/pharmacy-purchase-drafts/stats/summary?portal=${encodeURIComponent(portal)}`),
+};
+
+// Companies API (Pharmacy)
+export const companiesAPI = {
+  getAll: (portal = "pharmacy", status = "") => {
+    const q = [];
+    if (portal && portal !== "all") q.push(`portal=${encodeURIComponent(portal)}`);
+    if (status && status !== "all") q.push(`status=${encodeURIComponent(status)}`);
+    const qs = q.length ? `?${q.join("&")}` : "";
+    return apiCall(`/companies${qs}`);
+  },
+  getById: (id) => apiCall(`/companies/${id}`),
+  search: (query, portal = "pharmacy") =>
+    apiCall(`/companies/search/${encodeURIComponent(query)}?portal=${portal}`),
+  create: (data) => apiCall("/companies", "POST", data),
+  update: (id, data) => apiCall(`/companies/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/companies/${id}`, "DELETE"),
+};
+
 export default {
   users: usersAPI,
   pets: petsAPI,
@@ -842,6 +954,7 @@ export default {
   inventory: inventoryAPI,
   financials: financialsAPI,
   settings: settingsAPI,
+  pharmacySettings: pharmacySettingsAPI,
   activityLogs: activityLogsAPI,
   doctorProfile: doctorProfileAPI,
   products: productsAPI,
@@ -860,6 +973,9 @@ export default {
   vouchers: vouchersAPI,
   budgets: budgetsAPI,
   medicalForms: medicalFormsAPI,
+  companies: companiesAPI,
+  pharmacyInvoices: pharmacyInvoicesAPI,
+  pharmacyPurchaseDrafts: pharmacyPurchaseDraftsAPI,
   procedureCatalog: procedureCatalogAPI,
   fullRecord: fullRecordAPI,
   financialSummary: financialSummaryAPI,

@@ -7,7 +7,7 @@ import {
   FiTrash2,
   FiPrinter,
 } from "react-icons/fi";
-import { pharmacyHistoryAPI } from "../../services/api";
+import { pharmacyHistoryAPI, suppliersAPI } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
 import Modal from "../../components/Modal";
 
@@ -189,18 +189,112 @@ export default function PurchaseHistory() {
     setDeleteConfirm({ isOpen: false, purchaseId: null });
   };
 
-  const printPurchase = () => {
-    const printContent = printRef.current;
-    const windowPrint = window.open("", "", "width=800,height=600");
-    windowPrint.document.write("<html><head><title>Print Purchase</title>");
-    windowPrint.document.write(
-      "<style>body{font-family:Arial,sans-serif;padding:20px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:8px;text-align:left;}th{background-color:#f2f2f2;}</style>",
-    );
-    windowPrint.document.write("</head><body>");
-    windowPrint.document.write(printContent.innerHTML);
-    windowPrint.document.write("</body></html>");
-    windowPrint.document.close();
-    windowPrint.print();
+  const printPurchaseInvoice = async (purchase) => {
+    let supplierDetails = null;
+    if (purchase.supplierId) {
+      try {
+        const res = await suppliersAPI.getById(purchase.supplierId);
+        supplierDetails = res.data;
+      } catch (err) {
+        console.error("Error fetching supplier details:", err);
+      }
+    }
+
+    const printWindow = window.open("", "_blank", "width=900,height=700,left=50,top=50,toolbar=0,menubar=0,scrollbars=1");
+    const fmt = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const itemRows = (purchase.items || []).map((item, i) => `
+      <tr style="border-bottom:1px solid #e5e7eb;">
+        <td style="padding:8px 12px;">${i + 1}</td>
+        <td style="padding:8px 12px;font-weight:600;">${item.medicineName}</td>
+        <td style="padding:8px 12px;text-align:center;">${item.unitsPerPack ?? item.unit ?? '—'}</td>
+        <td style="padding:8px 12px;text-align:center;">${item.totalItems ?? item.quantity ?? 0}</td>
+        <td style="padding:8px 12px;text-align:right;">PKR ${fmt(item.buyPerPack ?? item.purchasePrice)}</td>
+        <td style="padding:8px 12px;text-align:right;">PKR ${fmt(item.buyPerUnit ?? item.purchasePrice)}</td>
+        <td style="padding:8px 12px;text-align:right;font-weight:700;color:#1d4ed8;">PKR ${fmt(item.lineTotal ?? item.totalCost)}</td>
+        <td style="padding:8px 12px;text-align:right;">PKR ${fmt(item.salePerPack ?? item.salePrice)}</td>
+        <td style="padding:8px 12px;text-align:right;">PKR ${fmt(item.salePerUnit ?? item.salePrice)}</td>
+        <td style="padding:8px 12px;text-align:center;">${item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : '—'}</td>
+        <td style="padding:8px 12px;font-family:monospace;font-size:11px;">${item.batchNo || '—'}</td>
+      </tr>`).join("");
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Purchase Invoice - ${purchase.invoiceNo}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:24px;}
+  h1{font-size:20px;font-weight:800;color:#1e1b4b;margin-bottom:2px;}
+  h2{font-size:15px;font-weight:600;color:#4c1d95;margin-bottom:16px;}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #7c3aed;}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;margin-bottom:20px;font-size:12px;border: 1px solid #e5e7eb; padding: 12px; border-radius: 8px;}
+  .meta-item{display:flex; gap: 8px;}
+  .meta span{color:#6b7280; font-weight: 500;}
+  .meta strong{color:#111;}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  thead tr{background:#4c1d95;color:#fff;}
+  thead th{padding:8px 12px;text-align:left;font-weight:600;white-space:nowrap;}
+  thead th.right{text-align:right;}
+  thead th.center{text-align:center;}
+  tbody tr:nth-child(even){background:#f5f3ff;}
+  tfoot tr{background:#ede9fe;font-weight:700;}
+  tfoot td{padding:10px 12px;}
+  .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;}
+  @media print{body{padding:8px;}}
+</style></head><body>
+<div class="header">
+  <div>
+    <h1>Purchase Invoice</h1>
+    <h2>${purchase.invoiceNo}</h2>
+  </div>
+  <div style="text-align:right;font-size:12px;color:#6b7280;">
+    <div><strong>PO#:</strong> ${purchase.purchaseOrderNo}</div>
+    <div><strong>Date:</strong> ${new Date(purchase.purchaseDate).toLocaleDateString()}</div>
+  </div>
+</div>
+
+<div style="margin-bottom: 12px; font-weight: bold; color: #1e1b4b; font-size: 14px;">Supplier Information</div>
+<div class="meta">
+  <div class="meta-item"><span>Supplier Name:</span><strong>${supplierDetails?.name || purchase.supplierName || '—'}</strong></div>
+  <div class="meta-item"><span>Company:</span><strong>${supplierDetails?.company || '—'}</strong></div>
+  <div class="meta-item"><span>Phone:</span><strong>${supplierDetails?.phone || purchase.supplierContact || '—'}</strong></div>
+  <div class="meta-item"><span>Address:</span><strong>${supplierDetails?.address || '—'}</strong></div>
+  <div class="meta-item"><span>Tax ID:</span><strong>${supplierDetails?.taxId || '—'}</strong></div>
+  <div class="meta-item"><span>Received by:</span><strong>${purchase.reviewedBy || purchase.receivedBy || '—'}</strong></div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Medicine</th>
+      <th class="center">Units/Pack</th>
+      <th class="center">Total Items</th>
+      <th class="right">Buy/Pack</th>
+      <th class="right">Buy/Unit</th>
+      <th class="right">Total Amount</th>
+      <th class="right">Sale/Pack</th>
+      <th class="right">Sale/Unit</th>
+      <th class="center">Expiry</th>
+      <th>Batch</th>
+    </tr>
+  </thead>
+  <tbody>${itemRows}</tbody>
+  <tfoot>
+    <tr>
+      <td colspan="6" style="text-align:right;">Total Purchase Amount:</td>
+      <td style="color:#1d4ed8;">PKR ${fmt(purchase.netTotal ?? purchase.totalAmount)}</td>
+      <td colspan="4"></td>
+    </tr>
+  </tfoot>
+</table>
+<div style="margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;border-top:1px dashed #d1d5db;padding-top:12px;">
+  Generated on ${new Date().toLocaleString()} — Abbottabad Pet Hospital Pharmacy
+</div>
+<script>window.onload=function(){window.print();setTimeout(function(){window.close();},300);};</script>
+</body></html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
   const exportToCSV = () => {
@@ -266,41 +360,6 @@ export default function PurchaseHistory() {
                   <FiRefreshCw size={14} />
                   Refresh
                 </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-              <div className="bg-blue-50 p-3 rounded">
-                <div className="text-xs text-blue-600 font-medium">
-                  Total Purchases
-                </div>
-                <div className="text-xl font-bold text-blue-900">
-                  {summary.totalPurchases}
-                </div>
-              </div>
-              <div className="bg-green-50 p-3 rounded">
-                <div className="text-xs text-green-600 font-medium">
-                  Total Amount
-                </div>
-                <div className="text-xl font-bold text-green-900">
-                  PKR {summary.totalAmount?.toLocaleString()}
-                </div>
-              </div>
-              <div className="bg-purple-50 p-3 rounded">
-                <div className="text-xs text-purple-600 font-medium">
-                  Amount Paid
-                </div>
-                <div className="text-xl font-bold text-purple-900">
-                  PKR {summary.totalPaid?.toLocaleString()}
-                </div>
-              </div>
-              <div className="bg-red-50 p-3 rounded">
-                <div className="text-xs text-red-600 font-medium">
-                  Outstanding
-                </div>
-                <div className="text-xl font-bold text-red-900">
-                  PKR {summary.outstandingAmount?.toLocaleString()}
-                </div>
               </div>
             </div>
 
@@ -405,10 +464,34 @@ export default function PurchaseHistory() {
                       Supplier Info
                     </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Amount Details
+                      Medicine
                     </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Payment Status
+                      Batch No
+                    </th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Units/Pack
+                    </th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Total Items
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Buy/Pack
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Buy/Unit
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Total Amount
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Sale/Pack
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Sale/Unit
+                    </th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Expiry
                     </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
@@ -419,7 +502,7 @@ export default function PurchaseHistory() {
                   {loading ? (
                     <tr>
                       <td
-                        colSpan="5"
+                        colSpan="13"
                         className="px-4 py-3 text-center text-gray-500 text-sm"
                       >
                         Loading purchase history...
@@ -428,7 +511,7 @@ export default function PurchaseHistory() {
                   ) : purchases.length === 0 ? (
                     <tr>
                       <td
-                        colSpan="5"
+                        colSpan="13"
                         className="px-4 py-3 text-center text-gray-500 text-sm"
                       >
                         No purchases found
@@ -437,24 +520,16 @@ export default function PurchaseHistory() {
                   ) : (
                     purchases.map((purchase) => (
                       <tr key={purchase._id} className="hover:bg-gray-50">
+                        {/* Purchase Details — Invoice bold + date only */}
                         <td className="px-4 py-2 whitespace-nowrap">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">
-                              {purchase.purchaseOrderNo}
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              {new Date(
-                                purchase.purchaseDate,
-                              ).toLocaleDateString()}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              Invoice: {purchase.invoiceNo}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {purchase.items?.length || 0} items
-                            </div>
+                          <div className="text-sm font-bold text-gray-900">
+                            {purchase.invoiceNo}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {new Date(purchase.purchaseDate).toLocaleDateString()}
                           </div>
                         </td>
+                        {/* Supplier Info */}
                         <td className="px-4 py-2 whitespace-nowrap">
                           <div>
                             <div className="text-sm font-medium text-gray-900">
@@ -463,46 +538,77 @@ export default function PurchaseHistory() {
                             <div className="text-xs text-gray-500">
                               {purchase.supplierContact}
                             </div>
-                            {purchase.receivedBy && (
-                              <div className="text-xs text-blue-600">
-                                Received by: {purchase.receivedBy}
-                              </div>
-                            )}
                           </div>
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">
-                              PKR {purchase.totalAmount?.toLocaleString()}
-                            </div>
-                            <div className="text-xs text-green-600">
-                              Paid: PKR {purchase.amountPaid?.toLocaleString()}
-                            </div>
-                            {purchase.totalAmount - purchase.amountPaid > 0 && (
-                              <div className="text-xs text-red-600">
-                                Due: PKR
-                                {(
-                                  purchase.totalAmount - purchase.amountPaid
-                                )?.toLocaleString()}
-                              </div>
-                            )}
+                        {/* Medicine — names joined */}
+                        <td className="px-4 py-2 max-w-[160px]">
+                          <div className="text-xs text-gray-800 leading-relaxed">
+                            {(purchase.items || []).map(i => i.medicineName).join(", ")}
                           </div>
                         </td>
+                        {/* Batch No */}
                         <td className="px-4 py-2 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getPaymentStatusColor(purchase.paymentStatus)}`}
-                          >
-                            {purchase.paymentStatus}
+                          <div className="text-xs font-mono text-gray-600">
+                            {(purchase.items || []).map(i => i.batchNo || '—').join(", ")}
+                          </div>
+                        </td>
+                        {/* Units/Pack */}
+                        <td className="px-4 py-2 text-center whitespace-nowrap">
+                          <div className="text-xs text-gray-600">
+                            {(purchase.items || []).map(i => i.unitsPerPack ?? i.unit ?? '—').join(", ")}
+                          </div>
+                        </td>
+                        {/* Total Items */}
+                        <td className="px-4 py-2 text-center whitespace-nowrap">
+                          <span className="text-sm font-bold text-gray-800">
+                            {(purchase.items || []).reduce((s, i) => s + (Number(i.totalItems ?? i.quantity) || 0), 0)}
                           </span>
                         </td>
+                        {/* Buy/Pack */}
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          <div className="text-xs text-gray-700">
+                            {(purchase.items || []).map(i => `PKR ${Number(i.buyPerPack ?? i.purchasePrice ?? 0).toFixed(2)}`).join(", ")}
+                          </div>
+                        </td>
+                        {/* Buy/Unit */}
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          <div className="text-xs text-gray-700">
+                            {(purchase.items || []).map(i => `PKR ${Number(i.buyPerUnit ?? i.purchasePrice ?? 0).toFixed(2)}`).join(", ")}
+                          </div>
+                        </td>
+                        {/* Total Amount */}
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          <div className="text-sm font-bold text-blue-700">
+                            PKR {Number(purchase.netTotal ?? purchase.totalAmount ?? 0).toFixed(2)}
+                          </div>
+                        </td>
+                        {/* Sale/Pack */}
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          <div className="text-xs text-gray-700">
+                            {(purchase.items || []).map(i => `PKR ${Number(i.salePerPack ?? i.salePrice ?? 0).toFixed(2)}`).join(", ")}
+                          </div>
+                        </td>
+                        {/* Sale/Unit */}
+                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                          <div className="text-xs text-gray-700">
+                            {(purchase.items || []).map(i => `PKR ${Number(i.salePerUnit ?? i.salePrice ?? 0).toFixed(2)}`).join(", ")}
+                          </div>
+                        </td>
+                        {/* Expiry */}
+                        <td className="px-4 py-2 text-center whitespace-nowrap">
+                          <div className="text-xs text-gray-600">
+                            {(purchase.items || []).map(i => i.expiryDate ? new Date(i.expiryDate).toLocaleDateString() : '—').join(", ")}
+                          </div>
+                        </td>
+                        {/* Actions */}
                         <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 items-center">
                             <button
-                              onClick={() => viewPurchaseDetails(purchase._id)}
-                              className="text-blue-600 hover:text-blue-900"
-                              title="View Details"
+                              onClick={() => printPurchaseInvoice(purchase)}
+                              className="text-purple-600 hover:text-purple-900"
+                              title="Print Invoice"
                             >
-                              <FiEye size={16} />
+                              <FiPrinter size={16} />
                             </button>
                             <button
                               onClick={() => deletePurchase(purchase._id)}
@@ -605,7 +711,7 @@ export default function PurchaseHistory() {
                   </h3>
                   <div className="flex gap-2">
                     <button
-                      onClick={printPurchase}
+                      onClick={() => printPurchaseInvoice(selectedPurchase.purchase)}
                       className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2"
                     >
                       <FiPrinter size={16} />

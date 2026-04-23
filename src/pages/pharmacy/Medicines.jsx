@@ -1,4 +1,5 @@
-﻿import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   FiPlus,
   FiEdit2,
@@ -16,6 +17,8 @@ import {
   suppliersAPI,
   pharmacySalesAPI,
   payablesAPI,
+  companiesAPI,
+  pharmacyPurchaseDraftsAPI,
 } from "../../services/api";
 import * as XLSX from "xlsx";
 import {
@@ -250,12 +253,59 @@ const createEmptyForm = () => {
     description: "",
     mlPerVial: 0,
     remainingMl: 0,
+    invoiceNo: "INV-1",
+    invoiceDate: new Date().toISOString().split("T")[0],
+    companyId: "",
+    // New item fields
+    genericName: "",
+    qtyPacks: 0,
+    unitsPerPack: 1,
+    buyPerPack: 0,
+    salePerPack: 0,
+    minStock: 0,
+    defaultDiscount: 0,
+    lineTaxType: "%",
+    lineTaxValue: 0,
+  };
+};
+
+const createEmptyItem = () => {
+  const mainCategory = catalogMainCategories[0] || "";
+  const firstSub = mainCategory ? getSubCategories(mainCategory)[0] || "" : "";
+  const firstMed =
+    mainCategory && firstSub
+      ? getCatalogMedicines(mainCategory, firstSub)[0] || ""
+      : "";
+  return {
+    id: Date.now() + Math.random(),
+    collapsed: false,
+    mainCategory,
+    subCategory: firstSub,
+    category: firstSub || mainCategory,
+    medicineName: firstMed,
+    batchNo: "",
+    genericName: "",
+    barcode: "",
+    expiryDate: "",
+    qtyPacks: 0,
+    unitsPerPack: 1,
+    buyPerPack: 0,
+    salePerPack: 0,
+    minStock: 0,
+    defaultDiscount: 0,
+    lineTaxType: "%",
+    lineTaxValue: 0,
+    unit: getCategoryUnit(mainCategory, firstSub),
+    containerType: getDefaultContainerType(mainCategory, firstSub),
   };
 };
 
 export default function Medicines() {
+  const navigate = useNavigate();
   const [medicines, setMedicines] = useState([]);
   const [filteredMedicines, setFilteredMedicines] = useState([]);
+  const [purchaseDrafts, setPurchaseDrafts] = useState([]);
+  const [filteredDrafts, setFilteredDrafts] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMainCategory, setSelectedMainCategory] = useState("All");
   const [selectedSubCategory, setSelectedSubCategory] = useState("");
@@ -271,12 +321,38 @@ export default function Medicines() {
     expired: 0,
   });
   const [suppliers, setSuppliers] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [showOtherSupplier, setShowOtherSupplier] = useState(false);
   const [supplierSelection, setSupplierSelection] = useState("");
+  const [showAddCompanyModal, setShowAddCompanyModal] = useState(false);
+  const [newCompanyData, setNewCompanyData] = useState({
+    supplierName: "",
+    contactPerson: "",
+    phone: "",
+    email: "",
+  });
+
+  // Invoice items (multi-item support)
+  const [invoiceItems, setInvoiceItems] = useState([createEmptyItem()]);
+
+  // Inline Add Supplier modal (in Invoice Details)
+  const [showAddSupplierInvModal, setShowAddSupplierInvModal] = useState(false);
+  const [newSupplierInvData, setNewSupplierInvData] = useState({
+    name: "", companyId: "", phone: "", address: "", taxId: "", status: "active",
+  });
+  const [savingSupplier, setSavingSupplier] = useState(false);
+
+  // Inline Add Company modal (in Invoice Details)
+  const [showAddCompanyInvModal, setShowAddCompanyInvModal] = useState(false);
+  const [newCompanyInvData, setNewCompanyInvData] = useState({
+    companyName: "", status: "active",
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(20);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
+  const [activeTab, setActiveTab] = useState("all");
   const importInputRef = useRef();
 
   const categories = useMemo(() => ["All", ...catalogMainCategories], []);
@@ -1148,11 +1224,14 @@ export default function Medicines() {
     fetchMedicines();
     fetchAlerts();
     fetchSuppliers();
+    fetchCompanies();
+    fetchPurchaseDrafts();
   }, []);
 
   useEffect(() => {
     filterMedicines();
-  }, [medicines, searchQuery, selectedMainCategory, selectedSubCategory]);
+    setCurrentPage(1);
+  }, [medicines, purchaseDrafts, searchQuery, selectedMainCategory, selectedSubCategory, activeTab]);
 
   const fetchMedicines = async () => {
     try {
@@ -1163,6 +1242,136 @@ export default function Medicines() {
     } catch (error) {
       showToast("Error fetching medicines");
       console.error("Fetch medicines error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchPurchaseDrafts = async () => {
+    try {
+      // Fetch both 'pending' and 'partial' drafts so partially-reviewed invoices stay visible
+      const [pendingRes, partialRes] = await Promise.all([
+        pharmacyPurchaseDraftsAPI.getAll({ status: 'pending' }),
+        pharmacyPurchaseDraftsAPI.getAll({ status: 'partial' }),
+      ]);
+      const combined = [
+        ...(pendingRes.data || []),
+        ...(partialRes.data || []),
+      ];
+      // Sort by submittedAt descending
+      combined.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+      setPurchaseDrafts(combined);
+    } catch (error) {
+      showToast("Error fetching purchase drafts");
+      console.error("Fetch purchase drafts error:", error);
+    }
+  };
+
+  const handleApproveDraft = async (draftId) => {
+    try {
+      setLoading(true);
+      await pharmacyPurchaseDraftsAPI.approve(draftId, { reviewedBy: "Admin" });
+      showToast("All items approved and added to inventory");
+
+      // Delete the draft after all items are approved
+      try {
+        await pharmacyPurchaseDraftsAPI.delete(draftId);
+        console.log("Purchase draft deleted after full approval:", draftId);
+      } catch (deleteErr) {
+        console.error("Error deleting draft after approval:", deleteErr);
+      }
+
+      fetchPurchaseDrafts();
+      fetchMedicines();
+    } catch (error) {
+      showToast(error.message || "Error approving purchase draft");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectDraft = async (draftId, reason = "") => {
+    try {
+      setLoading(true);
+      await pharmacyPurchaseDraftsAPI.reject(draftId, { reviewedBy: "Admin", reviewComments: reason });
+      showToast("All items rejected");
+
+      // Delete the draft after all items are rejected
+      try {
+        await pharmacyPurchaseDraftsAPI.delete(draftId);
+        console.log("Purchase draft deleted after full rejection:", draftId);
+      } catch (deleteErr) {
+        console.error("Error deleting draft after rejection:", deleteErr);
+      }
+
+      fetchPurchaseDrafts();
+    } catch (error) {
+      showToast(error.message || "Error rejecting purchase draft");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApproveItem = async (draftId, itemId) => {
+    try {
+      setLoading(true);
+      await pharmacyPurchaseDraftsAPI.approveItem(draftId, itemId, { reviewedBy: "Admin" });
+      showToast("Item approved and added to inventory");
+
+      // Check if all items in the draft are now processed (approved or rejected)
+      try {
+        const draftRes = await pharmacyPurchaseDraftsAPI.getById(draftId);
+        const draft = draftRes.data;
+        const allItems = draft?.items || [];
+        const allProcessed = allItems.length > 0 && allItems.every(
+          item => item.itemStatus === "approved" || item.itemStatus === "rejected"
+        );
+
+        if (allProcessed) {
+          await pharmacyPurchaseDraftsAPI.delete(draftId);
+          console.log("Purchase draft deleted after all items processed:", draftId);
+          showToast("All items processed - draft deleted");
+        }
+      } catch (checkErr) {
+        console.error("Error checking draft status after item approval:", checkErr);
+      }
+
+      fetchPurchaseDrafts();
+      fetchMedicines();
+    } catch (error) {
+      showToast(error.message || "Error approving item");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectItem = async (draftId, itemId, reason = "") => {
+    try {
+      setLoading(true);
+      await pharmacyPurchaseDraftsAPI.rejectItem(draftId, itemId, { reviewedBy: "Admin", reviewComments: reason });
+      showToast("Item rejected");
+
+      // Check if all items in the draft are now processed (approved or rejected)
+      try {
+        const draftRes = await pharmacyPurchaseDraftsAPI.getById(draftId);
+        const draft = draftRes.data;
+        const allItems = draft?.items || [];
+        const allProcessed = allItems.length > 0 && allItems.every(
+          item => item.itemStatus === "approved" || item.itemStatus === "rejected"
+        );
+
+        if (allProcessed) {
+          await pharmacyPurchaseDraftsAPI.delete(draftId);
+          console.log("Purchase draft deleted after all items processed:", draftId);
+          showToast("All items processed - draft deleted");
+        }
+      } catch (checkErr) {
+        console.error("Error checking draft status after item rejection:", checkErr);
+      }
+
+      fetchPurchaseDrafts();
+    } catch (error) {
+      showToast(error.message || "Error rejecting item");
     } finally {
       setLoading(false);
     }
@@ -1187,7 +1396,7 @@ export default function Medicines() {
 
   const fetchSuppliers = async () => {
     try {
-      const response = await suppliersAPI.getAll("pharmacy");
+      const response = await suppliersAPI.getAll("pharmacy", "active");
       const list = (response.data || []).map((s) => ({
         id: s._id,
         _id: s._id,
@@ -1210,7 +1419,37 @@ export default function Medicines() {
     }
   };
 
+  const fetchCompanies = async () => {
+    try {
+      const response = await companiesAPI.getAll("pharmacy", "active");
+      setCompanies(response.data || []);
+    } catch (error) {
+      console.error("Fetch companies error:", error);
+    }
+  };
+
   const filterMedicines = () => {
+    if (activeTab === "pending") {
+      // For pending review tab, show purchase drafts instead of medicines
+      let filtered = purchaseDrafts;
+      
+      if (searchQuery) {
+        filtered = filtered.filter(
+          (draft) =>
+            draft.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            draft.invoiceNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            draft.items.some(item => 
+              item.medicineName.toLowerCase().includes(searchQuery.toLowerCase())
+            )
+        );
+      }
+      
+      setFilteredDrafts(filtered);
+      setFilteredMedicines([]); // Clear medicines when showing drafts
+      return;
+    }
+
+    // Regular medicine filtering for other tabs
     let filtered = medicines;
 
     if (searchQuery) {
@@ -1236,7 +1475,27 @@ export default function Medicines() {
       );
     }
 
+    // Tab filter for medicines
+    if (activeTab === "low_stock") {
+      filtered = filtered.filter(
+        (med) => med.quantity <= med.lowStockThreshold && med.quantity > 0,
+      );
+    } else if (activeTab === "expiring") {
+      filtered = filtered.filter((med) => isExpiringSoon(med.expiryDate));
+    } else if (activeTab === "out_of_stock") {
+      filtered = filtered.filter((med) => Number(med.quantity || 0) === 0);
+    }
+
     setFilteredMedicines(filtered);
+    setFilteredDrafts([]); // Clear drafts when showing medicines
+  };
+
+  // Helper function to get total items count for pagination
+  const getTotalItemsCount = () => {
+    if (activeTab === "pending") {
+      return filteredDrafts.reduce((total, draft) => total + (draft.items?.length || 0), 0);
+    }
+    return filteredMedicines.length;
   };
 
   const showToast = (message) => {
@@ -1246,6 +1505,8 @@ export default function Medicines() {
 
   const openModal = async (medicine = null) => {
     fetchSuppliers();
+    fetchCompanies();
+    setInvoiceItems([createEmptyItem()]);
     if (medicine) {
       let full = medicine;
       try {
@@ -1291,6 +1552,8 @@ export default function Medicines() {
         description: hydrated.description || "",
         mlPerVial: hydrated.mlPerVial || 0,
         remainingMl: hydrated.remainingMl || hydrated.mlPerVial || 0,
+        invoiceNo: hydrated.invoiceNo || "",
+        invoiceDate: hydrated.invoiceDate?.split("T")[0] || new Date().toISOString().split("T")[0],
       });
       setMlPerVialInput(String(hydrated.mlPerVial || 0));
       setMlPerVialOriginal(Number(hydrated.mlPerVial || 0));
@@ -1322,6 +1585,89 @@ export default function Medicines() {
       variant: config.variant || "danger",
       onConfirm: config.onConfirm || null,
     });
+  };
+
+  const handleAddCompany = async () => {
+    const name = (newCompanyData.supplierName || "").trim();
+    if (!name) return;
+    try {
+      await suppliersAPI.create({
+        supplierName: name,
+        contactPerson: newCompanyData.contactPerson || "",
+        phone: newCompanyData.phone || "",
+        email: newCompanyData.email || "",
+        address: "",
+        city: "",
+        category: "",
+        notes: "",
+        portal: "pharmacy",
+      });
+      await fetchSuppliers();
+      setSupplierSelection(name);
+      setFormData((prev) => ({ ...prev, supplierName: name }));
+      setShowOtherSupplier(false);
+      setShowAddCompanyModal(false);
+      setNewCompanyData({ supplierName: "", contactPerson: "", phone: "", email: "" });
+      showToast("Company added successfully");
+    } catch (err) {
+      showToast(err.message || "Error adding company");
+    }
+  };
+
+  // Add Supplier from Invoice Details
+  const handleAddSupplierInv = async (e) => {
+    e.preventDefault();
+    if (!newSupplierInvData.name.trim()) return;
+    try {
+      setSavingSupplier(true);
+      const created = await suppliersAPI.create({
+        supplierName: newSupplierInvData.name.trim(),
+        phone: newSupplierInvData.phone || "",
+        address: newSupplierInvData.address || "",
+        taxId: newSupplierInvData.taxId || "",
+        status: newSupplierInvData.status || "active",
+        companyId: newSupplierInvData.companyId || null,
+        portal: "pharmacy",
+        contactPerson: "", email: "", city: "", notes: "",
+      });
+      await fetchSuppliers();
+      const newName = newSupplierInvData.name.trim();
+      setSupplierSelection(newName);
+      setFormData((prev) => ({ ...prev, supplierName: newName }));
+      setShowAddSupplierInvModal(false);
+      setNewSupplierInvData({ name: "", companyId: "", phone: "", address: "", taxId: "", status: "active" });
+      showToast("Supplier added");
+    } catch (err) {
+      showToast(err.message || "Error adding supplier");
+    } finally {
+      setSavingSupplier(false);
+    }
+  };
+
+  // Add Company from Invoice Details
+  const handleAddCompanyInv = async (e) => {
+    e.preventDefault();
+    if (!newCompanyInvData.companyName.trim()) return;
+    try {
+      setSavingCompany(true);
+      await companiesAPI.create({
+        companyName: newCompanyInvData.companyName.trim(),
+        status: newCompanyInvData.status || "active",
+        portal: "pharmacy",
+      });
+      await fetchCompanies();
+      setFormData((prev) => {
+        const match = companies.find(c => c.companyName === newCompanyInvData.companyName.trim());
+        return { ...prev, companyId: match?._id || prev.companyId };
+      });
+      setShowAddCompanyInvModal(false);
+      setNewCompanyInvData({ companyName: "", status: "active" });
+      showToast("Company added");
+    } catch (err) {
+      showToast(err.message || "Error adding company");
+    } finally {
+      setSavingCompany(false);
+    }
   };
 
   const handleConfirmDialogConfirm = () => {
@@ -1470,32 +1816,59 @@ export default function Medicines() {
         await pharmacyMedicinesAPI.update(editingMedicine._id, payload);
         showToast("Medicine updated successfully");
       } else {
-        const response = await pharmacyMedicinesAPI.create(payload);
-        const newMed = response.data || response;
-
-        // Update Supplier Purchase History and Totals
-        if (payload.purchasePrice > 0 && payload.quantity > 0) {
-          try {
-            const supplier = suppliers.find((s) =>
-              optionEquals(s.name || s.supplierName, resolvedSupplierName),
-            );
-            if (supplier) {
-              await suppliersAPI.addPurchase(supplier._id || supplier.id, {
-                productName: payload.medicineName,
-                quantity: Number(payload.quantity),
-                unitPrice: Number(payload.purchasePrice),
-                invoiceNumber: payload.batchNo || `MED-${Date.now()}`,
-                totalPrice:
-                  Number(payload.purchasePrice) * Number(payload.quantity),
-                portal: "pharmacy",
-              });
+        // Create one medicine record per invoice item
+        for (const item of invoiceItems) {
+          const uPack = item.unitsPerPack || 1;
+          const itemPayload = {
+            ...formData,
+            supplierName: resolvedSupplierName,
+            mainCategory: item.mainCategory,
+            subCategory: item.subCategory,
+            category: item.subCategory || item.mainCategory,
+            medicineName: item.medicineName,
+            batchNo: item.batchNo,
+            barcode: item.barcode,
+            expiryDate: item.expiryDate,
+            genericName: item.genericName,
+            qtyPacks: item.qtyPacks,
+            unitsPerPack: uPack,
+            buyPerPack: item.buyPerPack,
+            salePerPack: item.salePerPack,
+            quantity: (item.qtyPacks || 0) * uPack,
+            purchasePrice: uPack > 0 ? +((item.buyPerPack || 0) / uPack).toFixed(4) : 0,
+            salePrice: uPack > 0 ? +((item.salePerPack || 0) / uPack).toFixed(4) : 0,
+            lowStockThreshold: item.minStock || 10,
+            minStock: item.minStock || 0,
+            defaultDiscount: item.defaultDiscount || 0,
+            lineTaxType: item.lineTaxType || "%",
+            lineTaxValue: item.lineTaxValue || 0,
+            unit: item.unit || getCategoryUnit(item.mainCategory, item.subCategory),
+            containerType: item.containerType || getDefaultContainerType(item.mainCategory, item.subCategory),
+            mlPerVial: 0,
+          };
+          const response = await pharmacyMedicinesAPI.create(itemPayload);
+          // Update supplier purchase history per item
+          if (itemPayload.purchasePrice > 0 && itemPayload.quantity > 0) {
+            try {
+              const supplier = suppliers.find((s) =>
+                optionEquals(s.name || s.supplierName, resolvedSupplierName),
+              );
+              if (supplier) {
+                await suppliersAPI.addPurchase(supplier._id || supplier.id, {
+                  productName: itemPayload.medicineName,
+                  quantity: Number(itemPayload.quantity),
+                  unitPrice: Number(itemPayload.purchasePrice),
+                  invoiceNumber: formData.invoiceNo || `MED-${Date.now()}`,
+                  totalPrice: Number(itemPayload.purchasePrice) * Number(itemPayload.quantity),
+                  portal: "pharmacy",
+                });
+              }
+            } catch (supErr) {
+              console.error("Error updating supplier purchase history:", supErr);
             }
-          } catch (supErr) {
-            console.error("Error updating supplier purchase history:", supErr);
           }
         }
-
-        showToast("Medicine added successfully");
+        showToast(`${invoiceItems.length} medicine(s) added successfully`);
       }
       fetchMedicines();
       fetchAlerts();
@@ -1891,15 +2264,29 @@ export default function Medicines() {
             <FiUpload /> Import
           </button>
           <button
-            onClick={() => openModal()}
+            onClick={() => navigate("/pharmacy/add-invoice")}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg"
           >
-            <FiPlus /> Add Medicine
+            <FiPlus /> Add Invoice
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm opacity-90">Stock Value</p>
+              <p className="text-xl font-bold mt-1">
+                PKR {medicines
+                  .reduce((sum, m) => sum + (Number(m.purchasePrice || 0) * Number(m.quantity || 0)), 0)
+                  .toLocaleString()}
+              </p>
+            </div>
+            <FiPackage className="w-12 h-12 opacity-80" />
+          </div>
+        </div>
+
         <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-6 text-white">
           <div className="flex items-center justify-between">
             <div>
@@ -1925,6 +2312,18 @@ export default function Medicines() {
             <div>
               <p className="text-sm opacity-90">Expired</p>
               <p className="text-3xl font-bold mt-1">{alerts.expired}</p>
+            </div>
+            <FiPackage className="w-12 h-12 opacity-80" />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-slate-600 to-slate-700 rounded-xl p-6 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm opacity-90">Out of Stock</p>
+              <p className="text-3xl font-bold mt-1">
+                {medicines.filter(m => Number(m.quantity || 0) === 0).length}
+              </p>
             </div>
             <FiPackage className="w-12 h-12 opacity-80" />
           </div>
@@ -1972,7 +2371,53 @@ export default function Medicines() {
                 ))}
               </select>
             )}
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+            >
+              {[10, 20, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  Show {n}
+                </option>
+              ))}
+            </select>
           </div>
+        </div>
+
+        {/* Tab Filters */}
+        <div className="flex gap-2 mt-4 overflow-x-auto pb-1">
+          {[
+            { key: "all", label: "All Items" },
+            { key: "pending", label: "Pending Review", count: purchaseDrafts.reduce((n, d) => n + (d.items || []).filter(i => i.itemStatus === "pending").length, 0) },
+            { key: "low_stock", label: "Low Stock" },
+            { key: "expiring", label: "Expiring Soon" },
+            { key: "out_of_stock", label: "Out of Stock" },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
+                activeTab === tab.key
+                  ? "bg-purple-600 text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              {tab.label}
+              {tab.count > 0 && (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                  activeTab === tab.key 
+                    ? "bg-white text-purple-600" 
+                    : "bg-red-500 text-white"
+                }`}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1981,260 +2426,436 @@ export default function Medicines() {
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
           </div>
-        ) : filteredMedicines.length === 0 ? (
-          <div className="text-center py-12 text-slate-500">
-            <FiPackage className="w-16 h-16 mx-auto mb-4 opacity-30" />
-            <p>No medicines found</p>
-          </div>
+        ) : activeTab === "pending" ? (
+          // Purchase Drafts Table for Pending Review Tab - Show Individual Items
+          filteredDrafts.length === 0 ? (
+            <div className="text-center py-12 text-slate-500">
+              <FiPackage className="w-16 h-16 mx-auto mb-4 opacity-30" />
+              <p>No purchase drafts pending review</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Invoice</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Medicine</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Quantity</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Buy / Pack</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Sale / Pack</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Line Total</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(() => {
+                    // Flatten all items, then paginate
+                    const allFlatItems = filteredDrafts.flatMap((draft) =>
+                      (draft.items || []).map((item, idx) => ({
+                        ...item,
+                        _itemId:      item._id,
+                        draftId:      draft._id,
+                        invoiceNo:    draft.invoiceNo,
+                        invoiceDate:  draft.invoiceDate,
+                        supplierName: draft.supplierName,
+                        submittedBy:  draft.submittedBy,
+                        submittedAt:  draft.submittedAt,
+                        netTotal:     draft.netTotal,
+                        itemCount:    draft.items.length,
+                        isFirstItem:  idx === 0,
+                        draftStatus:  draft.status,
+                      }))
+                    );
+
+                    const start = (currentPage - 1) * itemsPerPage;
+                    return allFlatItems
+                      .slice(start, start + itemsPerPage)
+                      .map((item) => {
+                        // Treat missing/undefined itemStatus as "pending" (old records)
+                        const resolvedStatus = item.itemStatus || "pending";
+                        const isPending  = resolvedStatus === "pending";
+                        const isApproved = resolvedStatus === "approved";
+                        const isRejected = resolvedStatus === "rejected";
+
+                        // Row background tint based on item status
+                        const rowBg = isApproved
+                          ? "bg-green-50 hover:bg-green-100"
+                          : isRejected
+                          ? "bg-red-50 hover:bg-red-100"
+                          : "hover:bg-slate-50";
+
+                        return (
+                          <tr key={`${item.draftId}-${item._itemId}`} className={rowBg}>
+                            {/* Invoice column */}
+                            <td className="px-4 py-3">
+                              {item.isFirstItem ? (
+                                <div>
+                                  <p className="font-semibold text-slate-800 text-sm">{item.invoiceNo}</p>
+                                  <p className="text-xs text-slate-500">{new Date(item.invoiceDate).toLocaleDateString()}</p>
+                                  <p className="text-xs text-blue-600 font-medium">{item.supplierName}</p>
+                                  <p className="text-xs text-slate-400 mt-0.5">
+                                    {item.itemCount} item{item.itemCount !== 1 ? "s" : ""} · PKR {(item.netTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </p>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-slate-400 pl-3">↳ {item.invoiceNo}</p>
+                              )}
+                            </td>
+
+                            {/* Medicine column */}
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-slate-800 text-sm">{item.medicineName}</p>
+                              {item.genericName && <p className="text-xs text-slate-500">Generic: {item.genericName}</p>}
+                              {item.batchNo     && <p className="text-xs text-slate-500">Batch: {item.batchNo}</p>}
+                              {item.barcode     && <p className="text-xs text-slate-500">Barcode: {item.barcode}</p>}
+                              {item.expiryDate  && (
+                                <p className="text-xs text-slate-500">
+                                  Exp: {new Date(item.expiryDate).toLocaleDateString()}
+                                </p>
+                              )}
+                            </td>
+
+                            {/* Category */}
+                            <td className="px-4 py-3">
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                                {item.subCategory || item.category || item.mainCategory}
+                              </span>
+                              {item.mainCategory && item.mainCategory !== (item.subCategory || item.category) && (
+                                <p className="text-xs text-slate-400 mt-1">{item.mainCategory}</p>
+                              )}
+                            </td>
+
+                            {/* Quantity */}
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-slate-800 text-sm">{item.qtyPacks || 0} packs</p>
+                              <p className="text-xs text-slate-500">{item.unitsPerPack || 1} {item.unit || "units"}/pack</p>
+                              <p className="text-xs text-blue-600 font-medium">
+                                = {(item.qtyPacks || 0) * (item.unitsPerPack || 1)} {item.unit || "units"}
+                              </p>
+                            </td>
+
+                            {/* Buy/Pack */}
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-slate-800 text-sm">
+                                PKR {(item.buyPerPack || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </p>
+                              {item.buyPerUnit > 0 && (
+                                <p className="text-xs text-slate-500">
+                                  PKR {(item.buyPerUnit || 0).toFixed(2)}/{item.unit || "unit"}
+                                </p>
+                              )}
+                            </td>
+
+                            {/* Sale/Pack */}
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-green-700 text-sm">
+                                PKR {(item.salePerPack || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </p>
+                              {item.salePerUnit > 0 && (
+                                <p className="text-xs text-slate-500">
+                                  PKR {(item.salePerUnit || 0).toFixed(2)}/{item.unit || "unit"}
+                                </p>
+                              )}
+                            </td>
+
+                            {/* Line Total */}
+                            <td className="px-4 py-3">
+                              <p className="font-semibold text-slate-800 text-sm">
+                                PKR {(item.lineTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </p>
+                              {item.taxAmt > 0 && (
+                                <p className="text-xs text-slate-500">Tax: PKR {(item.taxAmt || 0).toFixed(2)}</p>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="px-4 py-3">
+                              {isPending ? (
+                                <div className="flex flex-col gap-1.5">
+                                  <button
+                                    onClick={() => handleApproveItem(item.draftId, item._itemId)}
+                                    disabled={loading}
+                                    className="px-3 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium w-full flex items-center justify-center gap-1"
+                                  >
+                                    ✓ Approve
+                                  </button>
+                                  <button
+                                    onClick={() => navigate("/pharmacy/add-invoice", { state: { draftId: item.draftId } })}
+                                    disabled={loading}
+                                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium w-full flex items-center justify-center gap-1"
+                                  >
+                                    <FiEdit2 className="w-3 h-3" /> Edit
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const reason = window.prompt("Reason for rejection (optional):");
+                                      if (reason !== null) handleRejectItem(item.draftId, item._itemId, reason);
+                                    }}
+                                    disabled={loading}
+                                    className="px-3 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium w-full flex items-center justify-center gap-1"
+                                  >
+                                    ✗ Reject
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          )
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Medicine
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Batch No
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Category
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Current Stock
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Min Stock
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Purchase Price
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Sale Price
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Expiry
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {filteredMedicines
-                  .slice(
-                    (currentPage - 1) * itemsPerPage,
-                    currentPage * itemsPerPage,
-                  )
-                  .map((medicine) => (
-                    <tr key={medicine._id} className="hover:bg-slate-50">
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="font-medium text-slate-800">
-                            {medicine.medicineName}
-                          </p>
-                          {medicine.barcode && (
-                            <p className="text-xs text-slate-500">
-                              Barcode: {medicine.barcode}
+          // Regular Medicines Table for Other Tabs
+          filteredMedicines.length === 0 ? (
+            <div className="text-center py-12 text-slate-500">
+              <FiPackage className="w-16 h-16 mx-auto mb-4 opacity-30" />
+              <p>No medicines found</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Medicine
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Batch No
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Category
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Current Stock
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Min Stock
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Purchase Price
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Sale Price
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Expiry
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredMedicines
+                    .slice(
+                      (currentPage - 1) * itemsPerPage,
+                      currentPage * itemsPerPage,
+                    )
+                    .map((medicine) => (
+                      <tr key={medicine._id} className="hover:bg-slate-50">
+                        <td className="px-6 py-4">
+                          <div>
+                            <p className="font-medium text-slate-800">
+                              {medicine.medicineName}
                             </p>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-600">
-                        {medicine.batchNo}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                            {medicine.category}
-                          </span>
-                          {medicine.subCategory &&
-                            medicine.subCategory !== medicine.category && (
-                              <p className="text-xs text-slate-500 mt-1">
-                                {medicine.subCategory}
+                            {medicine.barcode && (
+                              <p className="text-xs text-slate-500">
+                                Barcode: {medicine.barcode}
                               </p>
                             )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`font-semibold ${medicine.quantity <= medicine.lowStockThreshold ? "text-orange-600" : "text-green-600"}`}
-                        >
-                          {medicine.category === "Injection" ? (
-                            <div>
-                              <div>
-                                {medicine.quantity}{" "}
-                                {(medicine.containerType || "Vial") +
-                                  (String(
-                                    medicine.containerType || "Vial",
-                                  ).endsWith("s")
-                                    ? ""
-                                    : "s")}
-                              </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-slate-600">
+                          {medicine.batchNo}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div>
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                              {medicine.category}
+                            </span>
+                            {medicine.subCategory &&
+                              medicine.subCategory !== medicine.category && (
+                                <p className="text-xs text-slate-500 mt-1">
+                                  {medicine.subCategory}
+                                </p>
+                              )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`font-medium ${
+                                medicine.quantity <= medicine.lowStockThreshold
+                                  ? "text-red-600"
+                                  : "text-slate-800"
+                              }`}
+                            >
+                              {medicine.quantity} {medicine.unit}
+                            </span>
+                            {medicine.category === "Injection" &&
+                              medicine.remainingMl && (
+                                <span className="text-xs text-slate-500">
+                                  ({medicine.remainingMl} ml)
+                                </span>
+                              )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-slate-600">
+                          <span className="text-sm">
+                            {medicine.lowStockThreshold} {medicine.unit}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-slate-600">
+                          <div>
+                            <div className="font-medium">
+                              PKR {medicine.purchasePrice}
+                            </div>
+                            {medicine.supplierName && (
                               <div className="text-xs text-slate-500">
-                                {medicine.mlPerVial || 0}{" "}
-                                {formatUnitForDisplay(medicine.unit, "ml")} per{" "}
-                                {medicine.containerType || "Vial"}
+                                {medicine.supplierName}
                               </div>
-                              <div className="text-xs text-blue-600 font-medium">
-                                Remaining:{" "}
-                                {medicine.remainingMl ||
-                                  medicine.mlPerVial ||
-                                  0}{" "}
-                                {formatUnitForDisplay(medicine.unit, "ml")}
-                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div>
+                            <div className="font-semibold text-green-600">
+                              PKR {medicine.salePrice}
                             </div>
+                            {medicine.minSalePrice > 0 && (
+                              <div className="text-xs text-slate-500">
+                                Min: PKR {medicine.minSalePrice}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`text-sm ${isExpired(medicine.expiryDate) ? "text-red-600 font-semibold" : isExpiringSoon(medicine.expiryDate) ? "text-yellow-600 font-semibold" : "text-slate-600"}`}
+                          >
+                            {new Date(medicine.expiryDate).toLocaleDateString()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {isExpired(medicine.expiryDate) ? (
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                              Expired
+                            </span>
+                          ) : isExpiringSoon(medicine.expiryDate) ? (
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                              Expiring Soon
+                            </span>
+                          ) : medicine.quantity <= medicine.lowStockThreshold ? (
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                              Low Stock
+                            </span>
                           ) : (
-                            `${medicine.quantity} ${medicine.unit}`
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                              OK
+                            </span>
                           )}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="text-slate-600 font-medium">
-                          {medicine.lowStockThreshold} {medicine.unit}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-slate-600">
-                        <div>
-                          <div className="font-medium">
-                            PKR {medicine.purchasePrice}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => openModal(medicine)}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                            >
+                              <FiEdit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => openDeleteModal(medicine)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                            >
+                              <FiTrash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          {medicine.supplierName && (
-                            <div className="text-xs text-slate-500">
-                              {medicine.supplierName}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          <div className="font-semibold text-green-600">
-                            PKR {medicine.salePrice}
-                          </div>
-                          {medicine.minSalePrice > 0 && (
-                            <div className="text-xs text-slate-500">
-                              Min: PKR {medicine.minSalePrice}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`text-sm ${isExpired(medicine.expiryDate) ? "text-red-600 font-semibold" : isExpiringSoon(medicine.expiryDate) ? "text-yellow-600 font-semibold" : "text-slate-600"}`}
-                        >
-                          {new Date(medicine.expiryDate).toLocaleDateString()}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        {isExpired(medicine.expiryDate) ? (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                            Expired
-                          </span>
-                        ) : isExpiringSoon(medicine.expiryDate) ? (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
-                            Expiring Soon
-                          </span>
-                        ) : medicine.quantity <= medicine.lowStockThreshold ? (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
-                            Low Stock
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                            OK
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openModal(medicine)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-                          >
-                            <FiEdit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => openDeleteModal(medicine)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                          >
-                            <FiTrash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )
         )}
 
         {/* Pagination */}
-        {!loading && filteredMedicines.length > 0 && (
-          <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between">
-            <div className="text-sm text-slate-600">
-              Showing {(currentPage - 1) * itemsPerPage + 1} to{" "}
-              {Math.min(currentPage * itemsPerPage, filteredMedicines.length)}{" "}
-              of {filteredMedicines.length} medicines
-            </div>
-            <div className="flex items-center gap-2">
+        {!loading && getTotalItemsCount() > itemsPerPage && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200">
+            <p className="text-sm text-slate-500">
+              Showing{" "}
+              <span className="font-medium text-slate-700">
+                {(currentPage - 1) * itemsPerPage + 1}
+              </span>
+              {" "}–{" "}
+              <span className="font-medium text-slate-700">
+                {Math.min(currentPage * itemsPerPage, getTotalItemsCount())}
+              </span>
+              {" "}of{" "}
+              <span className="font-medium text-slate-700">
+                {getTotalItemsCount()}
+              </span>
+              {activeTab === "pending" && (
+                <span className="text-xs text-slate-400 ml-2">
+                  (individual items from {filteredDrafts.length} invoice{filteredDrafts.length !== 1 ? 's' : ''})
+                </span>
+              )}
+            </p>
+            <div className="flex items-center gap-1">
               <button
-                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
-                className="px-3 py-1 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 border border-slate-300 rounded-lg text-sm hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Previous
               </button>
-              <div className="flex items-center gap-1">
-                {Array.from(
-                  {
-                    length: Math.ceil(filteredMedicines.length / itemsPerPage),
-                  },
-                  (_, i) => i + 1,
-                )
-                  .filter((page) => {
-                    const totalPages = Math.ceil(
-                      filteredMedicines.length / itemsPerPage,
-                    );
-                    if (totalPages <= 7) return true;
-                    if (page === 1 || page === totalPages) return true;
-                    if (page >= currentPage - 1 && page <= currentPage + 1)
-                      return true;
-                    return false;
-                  })
-                  .map((page, index, array) => (
-                    <React.Fragment key={page}>
-                      {index > 0 && array[index - 1] !== page - 1 && (
-                        <span className="px-2 text-slate-400">...</span>
-                      )}
-                      <button
-                        onClick={() => setCurrentPage(page)}
-                        className={`px-3 py-1 rounded-lg ${
-                          currentPage === page
-                            ? "bg-purple-600 text-white"
-                            : "border border-slate-300 hover:bg-slate-50"
-                        }`}
-                      >
-                        {page}
-                      </button>
-                    </React.Fragment>
-                  ))}
-              </div>
+              {Array.from(
+                { length: Math.ceil(getTotalItemsCount() / itemsPerPage) },
+                (_, i) => i + 1
+              )
+                .filter((page) => {
+                  const total = Math.ceil(getTotalItemsCount() / itemsPerPage);
+                  if (total <= 5) return true;
+                  if (page === 1 || page === total) return true;
+                  if (page >= currentPage - 1 && page <= currentPage + 1) return true;
+                  return false;
+                })
+                .map((page, idx, arr) => (
+                  <React.Fragment key={page}>
+                    {idx > 0 && arr[idx - 1] !== page - 1 && (
+                      <span className="px-1 text-slate-400 text-sm">…</span>
+                    )}
+                    <button
+                      onClick={() => setCurrentPage(page)}
+                      className={`px-3 py-1 rounded-lg text-sm border ${
+                        currentPage === page
+                          ? "bg-purple-600 text-white border-purple-600"
+                          : "border-slate-300 hover:bg-slate-50"
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  </React.Fragment>
+                ))}
               <button
                 onClick={() =>
-                  setCurrentPage((prev) =>
-                    Math.min(
-                      Math.ceil(filteredMedicines.length / itemsPerPage),
-                      prev + 1,
-                    ),
+                  setCurrentPage((p) =>
+                    Math.min(Math.ceil(getTotalItemsCount() / itemsPerPage), p + 1)
                   )
                 }
                 disabled={
-                  currentPage >=
-                  Math.ceil(filteredMedicines.length / itemsPerPage)
+                  currentPage >= Math.ceil(getTotalItemsCount() / itemsPerPage)
                 }
-                className="px-3 py-1 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 border border-slate-300 rounded-lg text-sm hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Next
               </button>
@@ -2244,11 +2865,11 @@ export default function Medicines() {
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-5xl max-h-[95vh] sm:max-h-[92vh] overflow-y-auto">
             <div className="sticky top-0 bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-4 flex items-center justify-between">
               <h3 className="text-xl font-bold text-white">
-                {editingMedicine ? "Edit Medicine" : "Add New Medicine"}
+                {editingMedicine ? "Edit Invoice" : "Add New Invoice"}
               </h3>
               <button
                 onClick={closeModal}
@@ -2259,1277 +2880,396 @@ export default function Medicines() {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Main Category *
-                  </label>
-                  <select
-                    value={formData.mainCategory}
-                    onChange={(e) => handleMainCategorySelect(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  >
-                    <option value="">Select Main Category</option>
-                    {mainCategoryOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddMainCategory((v) => !v)}
-                      className="text-xs text-green-600 hover:underline"
-                    >
-                      + Add New Category
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowManageMainCategory((v) => !v)}
-                      className="text-xs text-purple-600 hover:underline"
-                    >
-                      Manage categories
-                    </button>
-                  </div>
-                  {showAddMainCategory && (
-                    <div className="mt-2 flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter new main category"
-                        value={newMainCategoryName}
-                        onChange={(e) => setNewMainCategoryName(e.target.value)}
-                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          addCustomMainCategory(newMainCategoryName)
-                        }
-                        className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowAddMainCategory(false);
-                          setNewMainCategoryName("");
-                        }}
-                        className="px-3 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-xs"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                  {showManageMainCategory && (
-                    <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50">
-                      {(() => {
-                        const hidden = getHiddenMainCategories();
-                        const custom = getCustomMainCategories();
-                        const base = [
-                          ...new Set([...catalogMainCategories, ...custom]),
-                        ];
-                        const visible = base.filter(
-                          (mc) => !hidden.includes(mc),
-                        );
-                        if (!visible.length) {
-                          return (
-                            <p className="text-xs text-slate-500">
-                              No categories available.
-                            </p>
-                          );
-                        }
-                        return (
-                          <ul className="space-y-1">
-                            {visible.map((mc) => (
-                              <li
-                                key={mc}
-                                className="flex items-center justify-between text-xs text-slate-700"
-                              >
-                                {optionEdit.kind === "main" &&
-                                optionEdit.oldValue === mc ? (
-                                  <div className="flex-1 flex items-center gap-2">
-                                    <input
-                                      value={optionEdit.value}
-                                      onChange={(e) =>
-                                        setOptionEdit((prev) => ({
-                                          ...prev,
-                                          value: e.target.value,
-                                        }))
-                                      }
-                                      className="flex-1 px-2 py-1 border border-slate-300 rounded"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        renameCustomMainCategory(
-                                          optionEdit.oldValue,
-                                          optionEdit.value,
-                                        );
-                                        setOptionEdit({
-                                          kind: "",
-                                          oldValue: "",
-                                          value: "",
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        });
-                                      }}
-                                      className="px-2 py-1 rounded bg-emerald-600 text-white"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setOptionEdit({
-                                          kind: "",
-                                          oldValue: "",
-                                          value: "",
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        })
-                                      }
-                                      className="px-2 py-1 rounded border border-slate-300"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span>{formatCatalogLabel(mc)}</span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    openConfirmDialog({
-                                      title: "Remove Category",
-                                      message: `Remove category "${formatCatalogLabel(mc)}" from this dropdown?`,
-                                      confirmLabel: "Remove",
-                                      variant: "danger",
-                                      onConfirm: () => hideMainCategory(mc),
-                                    });
-                                  }}
-                                  className="text-red-600 hover:text-red-700 p-1 rounded-full hover:bg-red-50"
-                                >
-                                  <FiX className="w-3 h-3" />
-                                </button>
-                                {custom.includes(mc) &&
-                                  optionEdit.kind !== "main" && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setOptionEdit({
-                                          kind: "main",
-                                          oldValue: mc,
-                                          value: mc,
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        })
-                                      }
-                                      className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-50"
-                                    >
-                                      <FiEdit2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                              </li>
-                            ))}
-                          </ul>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Subcategory *
-                  </label>
-                  <select
-                    disabled={!formData.mainCategory}
-                    value={formData.subCategory}
-                    onChange={(e) => handleSubCategorySelect(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:text-slate-500"
-                  >
-                    <option value="">Select Subcategory</option>
-                    {subCategoryOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="mt-1 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddSubCategory((v) => !v)}
-                      className="text-xs text-green-600 hover:underline disabled:text-slate-400"
-                      disabled={!formData.mainCategory}
-                    >
-                      + Add New Subcategory
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowManageSubCategory((v) => !v)}
-                      className="text-xs text-purple-600 hover:underline disabled:text-slate-400"
-                      disabled={!formData.mainCategory}
-                    >
-                      Manage subcategories
-                    </button>
-                  </div>
-                  {showAddSubCategory && formData.mainCategory && (
-                    <div className="mt-2 flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter new subcategory"
-                        value={newSubCategoryName}
-                        onChange={(e) => setNewSubCategoryName(e.target.value)}
-                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => addCustomSubCategory(newSubCategoryName)}
-                        className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowAddSubCategory(false);
-                          setNewSubCategoryName("");
-                        }}
-                        className="px-3 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-xs"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                  {showManageSubCategory && formData.mainCategory && (
-                    <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50">
-                      {(() => {
-                        const catalogSubs = getSubCategories(
-                          formData.mainCategory,
-                        );
-                        const customSubs = getCustomSubCategories(
-                          formData.mainCategory,
-                        );
-                        const all = [
-                          ...new Set([...catalogSubs, ...customSubs]),
-                        ];
-                        const hidden = getHiddenSubCategories(
-                          formData.mainCategory,
-                        );
-                        const visible = all.filter(
-                          (sc) => !hidden.includes(sc),
-                        );
-                        if (!visible.length) {
-                          return (
-                            <p className="text-xs text-slate-500">
-                              No subcategories for this main category.
-                            </p>
-                          );
-                        }
-                        return (
-                          <ul className="space-y-1">
-                            {visible.map((sc) => (
-                              <li
-                                key={sc}
-                                className="flex items-center justify-between text-xs text-slate-700"
-                              >
-                                {optionEdit.kind === "sub" &&
-                                optionEdit.oldValue === sc &&
-                                optionEdit.mainCategory ===
-                                  formData.mainCategory ? (
-                                  <div className="flex-1 flex items-center gap-2">
-                                    <input
-                                      value={optionEdit.value}
-                                      onChange={(e) =>
-                                        setOptionEdit((prev) => ({
-                                          ...prev,
-                                          value: e.target.value,
-                                        }))
-                                      }
-                                      className="flex-1 px-2 py-1 border border-slate-300 rounded"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        renameCustomSubCategory(
-                                          formData.mainCategory,
-                                          optionEdit.oldValue,
-                                          optionEdit.value,
-                                        );
-                                        setOptionEdit({
-                                          kind: "",
-                                          oldValue: "",
-                                          value: "",
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        });
-                                      }}
-                                      className="px-2 py-1 rounded bg-emerald-600 text-white"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setOptionEdit({
-                                          kind: "",
-                                          oldValue: "",
-                                          value: "",
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        })
-                                      }
-                                      className="px-2 py-1 rounded border border-slate-300"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span>{formatCatalogLabel(sc)}</span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    openConfirmDialog({
-                                      title: "Remove Subcategory",
-                                      message: `Remove subcategory "${formatCatalogLabel(sc)}" from this dropdown?`,
-                                      confirmLabel: "Remove",
-                                      variant: "danger",
-                                      onConfirm: () =>
-                                        hideSubCategory(
-                                          formData.mainCategory,
-                                          sc,
-                                        ),
-                                    });
-                                  }}
-                                  className="text-red-600 hover:text-red-700 p-1 rounded-full hover:bg-red-50"
-                                >
-                                  <FiX className="w-3 h-3" />
-                                </button>
-                                {customSubs.includes(sc) &&
-                                  optionEdit.kind !== "sub" && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setOptionEdit({
-                                          kind: "sub",
-                                          oldValue: sc,
-                                          value: sc,
-                                          mainCategory: formData.mainCategory,
-                                          subCategory: "",
-                                        })
-                                      }
-                                      className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-50"
-                                    >
-                                      <FiEdit2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                              </li>
-                            ))}
-                          </ul>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Medicine *
-                  </label>
-                  <div className="flex gap-2">
-                    <select
-                      disabled={!formData.subCategory}
-                      value={formData.medicineName}
-                      onChange={(e) => handleMedicineSelect(e.target.value)}
-                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:text-slate-500"
-                    >
-                      <option value="">Select Medicine</option>
-                      {medicineOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    {suppliers.find((s) => s.name === supplierSelection) && (
-                      <select
-                        disabled={
-                          !supplierSelection || supplierSelection === "other"
-                        }
-                        onChange={(e) => {
-                          const medName = e.target.value;
-                          if (!medName) return;
-                          const existing = medicines.find(
-                            (m) =>
-                              m.medicineName === medName &&
-                              m.supplierName === supplierSelection,
-                          );
-                          if (existing) {
-                            setFormData((prev) => ({
-                              ...prev,
-                              medicineName: existing.medicineName,
-                              barcode: existing.barcode || prev.barcode,
-                              unit: existing.unit || prev.unit,
-                              containerType:
-                                existing.containerType || prev.containerType,
-                              purchasePrice:
-                                existing.purchasePrice || prev.purchasePrice,
-                              salePrice: existing.salePrice || prev.salePrice,
-                              mlPerVial: existing.mlPerVial || prev.mlPerVial,
-                              lowStockThreshold:
-                                existing.lowStockThreshold ||
-                                prev.lowStockThreshold,
-                            }));
-                            setMlPerVialInput(String(existing.mlPerVial || 0));
-                          }
-                        }}
-                        className="w-48 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                      >
-                        <option value="">From Supplier...</option>
-                        {[
-                          ...new Set(
-                            medicines
-                              .filter(
-                                (m) => m.supplierName === supplierSelection,
-                              )
-                              .map((m) => m.medicineName),
-                          ),
-                        ].map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                  <div className="mt-1 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setShowAddMedicineOption((v) => !v)}
-                      className="text-xs text-green-600 hover:underline disabled:text-slate-400"
-                      disabled={!formData.mainCategory || !formData.subCategory}
-                    >
-                      + Add New Medicine
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowManageMedicineOptions((v) => !v)}
-                      className="text-xs text-purple-600 hover:underline disabled:text-slate-400"
-                      disabled={!formData.mainCategory || !formData.subCategory}
-                    >
-                      Manage medicines
-                    </button>
-                  </div>
-                  {showAddMedicineOption &&
-                    formData.mainCategory &&
-                    formData.subCategory && (
-                      <div className="mt-2 flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Enter new medicine name"
-                          value={newMedicineName}
-                          onChange={(e) => setNewMedicineName(e.target.value)}
-                          className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            addCustomMedicineOption(newMedicineName)
-                          }
-                          className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowAddMedicineOption(false);
-                            setNewMedicineName("");
-                          }}
-                          className="px-3 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-xs"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  {showManageMedicineOptions &&
-                    formData.mainCategory &&
-                    formData.subCategory && (
-                      <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50">
-                        {(() => {
-                          const catalogMeds = getCatalogMedicines(
-                            formData.mainCategory,
-                            formData.subCategory,
-                          );
-                          const customMeds = getCustomMedicines(
-                            formData.mainCategory,
-                            formData.subCategory,
-                          );
-                          const all = [
-                            ...new Set([...catalogMeds, ...customMeds]),
-                          ];
-                          const hidden = getHiddenMedicines(
-                            formData.mainCategory,
-                            formData.subCategory,
-                          );
-                          const visible = all.filter(
-                            (m) => !hidden.includes(m),
-                          );
-                          if (!visible.length) {
-                            return (
-                              <p className="text-xs text-slate-500">
-                                No medicines for this category.
-                              </p>
-                            );
-                          }
-                          return (
-                            <ul className="space-y-1">
-                              {visible.map((m) => (
-                                <li
-                                  key={m}
-                                  className="flex items-center justify-between text-xs text-slate-700"
-                                >
-                                  {optionEdit.kind === "med" &&
-                                  optionEdit.oldValue === m &&
-                                  optionEdit.mainCategory ===
-                                    formData.mainCategory &&
-                                  optionEdit.subCategory ===
-                                    formData.subCategory ? (
-                                    <div className="flex-1 flex items-center gap-2">
-                                      <input
-                                        value={optionEdit.value}
-                                        onChange={(e) =>
-                                          setOptionEdit((prev) => ({
-                                            ...prev,
-                                            value: e.target.value,
-                                          }))
-                                        }
-                                        className="flex-1 px-2 py-1 border border-slate-300 rounded"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          renameCustomMedicineName(
-                                            formData.mainCategory,
-                                            formData.subCategory,
-                                            optionEdit.oldValue,
-                                            optionEdit.value,
-                                          );
-                                          setOptionEdit({
-                                            kind: "",
-                                            oldValue: "",
-                                            value: "",
-                                            mainCategory: "",
-                                            subCategory: "",
-                                          });
-                                        }}
-                                        className="px-2 py-1 rounded bg-emerald-600 text-white"
-                                      >
-                                        Save
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setOptionEdit({
-                                            kind: "",
-                                            oldValue: "",
-                                            value: "",
-                                            mainCategory: "",
-                                            subCategory: "",
-                                          })
-                                        }
-                                        className="px-2 py-1 rounded border border-slate-300"
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <span>{m}</span>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      openConfirmDialog({
-                                        title: "Remove Medicine",
-                                        message: `Remove medicine "${m}" from this dropdown?`,
-                                        confirmLabel: "Remove",
-                                        variant: "danger",
-                                        onConfirm: () =>
-                                          hideMedicineName(
-                                            formData.mainCategory,
-                                            formData.subCategory,
-                                            m,
-                                          ),
-                                      });
-                                    }}
-                                    className="text-red-600 hover:text-red-700 p-1 rounded-full hover:bg-red-50"
-                                  >
-                                    <FiX className="w-3 h-3" />
-                                  </button>
-                                  {customMeds.includes(m) &&
-                                    optionEdit.kind !== "med" && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setOptionEdit({
-                                            kind: "med",
-                                            oldValue: m,
-                                            value: m,
-                                            mainCategory: formData.mainCategory,
-                                            subCategory: formData.subCategory,
-                                          })
-                                        }
-                                        className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-50"
-                                      >
-                                        <FiEdit2 className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                </li>
-                              ))}
-                            </ul>
-                          );
-                        })()}
-                      </div>
-                    )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Batch Number{" "}
-                    <span className="text-slate-500 text-xs">(Optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.batchNo}
-                    onChange={(e) =>
-                      setFormData({ ...formData, batchNo: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    placeholder="Auto or manual batch reference"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Barcode Number *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.barcode}
-                    onChange={(e) =>
-                      setFormData({ ...formData, barcode: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    placeholder="Scan or type barcode"
-                    autoComplete="off"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Quantity *
-                  </label>
-                  <div className="flex gap-3">
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      step="0.01"
-                      value={formData.quantity}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          quantity: parseFloat(e.target.value) || 0,
-                        })
-                      }
-                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                    <select
-                      value={
-                        showCustomUnit
-                          ? UNIT_CUSTOM_OPTION
-                          : formData.unit || ""
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === UNIT_CUSTOM_OPTION) {
-                          setShowCustomUnit(true);
-                        } else {
-                          setShowCustomUnit(false);
-                          setFormData({ ...formData, unit: v });
-                        }
-                      }}
-                      className="w-44 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    >
-                      {unitOptions.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                      <option value={UNIT_CUSTOM_OPTION}>+ Add New Unit</option>
-                    </select>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Unit updates automatically with category selection
-                  </p>
-                  <div className="mt-1 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setShowManageUnit((v) => !v)}
-                      className="text-xs text-purple-600 hover:underline"
-                    >
-                      Manage custom units
-                    </button>
-                  </div>
-                  {showManageUnit && (
-                    <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50">
-                      {customUnitsForCurrent.length === 0 ? (
-                        <p className="text-xs text-slate-500">
-                          No custom units for this category.
-                        </p>
-                      ) : (
-                        <ul className="space-y-1">
-                          {customUnitsForCurrent.map((u) => (
-                            <li
-                              key={u}
-                              className="flex items-center justify-between text-xs text-slate-700"
-                            >
-                              {optionEdit.kind === "unit" &&
-                              optionEdit.oldValue === u ? (
-                                <div className="flex-1 flex items-center gap-2">
-                                  <input
-                                    value={optionEdit.value}
-                                    onChange={(e) =>
-                                      setOptionEdit((prev) => ({
-                                        ...prev,
-                                        value: e.target.value,
-                                      }))
-                                    }
-                                    className="flex-1 px-2 py-1 border border-slate-300 rounded"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      renameCustomUnit(
-                                        optionEdit.oldValue,
-                                        optionEdit.value,
-                                      );
-                                      setOptionEdit({
-                                        kind: "",
-                                        oldValue: "",
-                                        value: "",
-                                        mainCategory: "",
-                                        subCategory: "",
-                                      });
-                                    }}
-                                    className="px-2 py-1 rounded bg-emerald-600 text-white"
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setOptionEdit({
-                                        kind: "",
-                                        oldValue: "",
-                                        value: "",
-                                        mainCategory: "",
-                                        subCategory: "",
-                                      })
-                                    }
-                                    className="px-2 py-1 rounded border border-slate-300"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <span>{u}</span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  openConfirmDialog({
-                                    title: "Delete Custom Unit",
-                                    message: `Delete unit "${u}" from this category?`,
-                                    confirmLabel: "Delete",
-                                    variant: "danger",
-                                    onConfirm: () => removeCustomUnit(u),
-                                  });
-                                }}
-                                className="text-red-600 hover:text-red-700 p-1 rounded-full hover:bg-red-50"
-                              >
-                                <FiX className="w-3 h-3" />
-                              </button>
-                              {optionEdit.kind !== "unit" && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setOptionEdit({
-                                      kind: "unit",
-                                      oldValue: u,
-                                      value: u,
-                                      mainCategory: "",
-                                      subCategory: "",
-                                    })
-                                  }
-                                  className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-50"
-                                >
-                                  <FiEdit2 className="w-3 h-3" />
-                                </button>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {showCustomUnit && (
-                  <div className="md:col-span-2 -mt-2">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter new unit (e.g. IU, strip, sachet)"
-                        value={customUnitValue}
-                        onChange={(e) => setCustomUnitValue(e.target.value)}
-                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => addCustomUnit(customUnitValue)}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
-                      >
-                        Add Unit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowCustomUnit(false);
-                          setCustomUnitValue("");
-                        }}
-                        className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {containerOptions.length > 0 && (
+              {/* Invoice Details Section */}
+              <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
+                <h4 className="text-sm font-semibold text-blue-700 mb-3 flex items-center gap-2">
+                  <FiPackage className="w-4 h-4" /> Invoice Details
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Supplier */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Container Type
+                      Supplier
                     </label>
-                    <select
-                      value={
-                        showCustomContainer
-                          ? CONTAINER_CUSTOM_OPTION
-                          : formData.containerType || ""
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === CONTAINER_CUSTOM_OPTION) {
-                          setShowCustomContainer(true);
-                        } else {
-                          setShowCustomContainer(false);
-                          setFormData({ ...formData, containerType: v });
-                        }
-                      }}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    >
-                      {containerOptions.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                      <option value={CONTAINER_CUSTOM_OPTION}>
-                        + Add New Container Type
-                      </option>
-                    </select>
-                    <div className="mt-1 flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setShowManageContainer((v) => !v)}
-                        className="text-xs text-purple-600 hover:underline"
-                      >
-                        Manage custom container types
-                      </button>
-                    </div>
-                    {showManageContainer && (
-                      <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50">
-                        {customContainersForCurrent.length === 0 ? (
-                          <p className="text-xs text-slate-500">
-                            No custom container types for this category.
-                          </p>
-                        ) : (
-                          <ul className="space-y-1">
-                            {customContainersForCurrent.map((c) => (
-                              <li
-                                key={c}
-                                className="flex items-center justify-between text-xs text-slate-700"
-                              >
-                                {optionEdit.kind === "container" &&
-                                optionEdit.oldValue === c ? (
-                                  <div className="flex-1 flex items-center gap-2">
-                                    <input
-                                      value={optionEdit.value}
-                                      onChange={(e) =>
-                                        setOptionEdit((prev) => ({
-                                          ...prev,
-                                          value: e.target.value,
-                                        }))
-                                      }
-                                      className="flex-1 px-2 py-1 border border-slate-300 rounded"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        renameCustomContainer(
-                                          optionEdit.oldValue,
-                                          optionEdit.value,
-                                        );
-                                        setOptionEdit({
-                                          kind: "",
-                                          oldValue: "",
-                                          value: "",
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        });
-                                      }}
-                                      className="px-2 py-1 rounded bg-emerald-600 text-white"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setOptionEdit({
-                                          kind: "",
-                                          oldValue: "",
-                                          value: "",
-                                          mainCategory: "",
-                                          subCategory: "",
-                                        })
-                                      }
-                                      className="px-2 py-1 rounded border border-slate-300"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span>{c}</span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    openConfirmDialog({
-                                      title: "Delete Container Type",
-                                      message: `Delete container type "${c}" from this category?`,
-                                      confirmLabel: "Delete",
-                                      variant: "danger",
-                                      onConfirm: () => removeCustomContainer(c),
-                                    });
-                                  }}
-                                  className="text-red-600 hover:text-red-700 p-1 rounded-full hover:bg-red-50"
-                                >
-                                  <FiX className="w-3 h-3" />
-                                </button>
-                                {optionEdit.kind !== "container" && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setOptionEdit({
-                                        kind: "container",
-                                        oldValue: c,
-                                        value: c,
-                                        mainCategory: "",
-                                        subCategory: "",
-                                      })
-                                    }
-                                    className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-50"
-                                  >
-                                    <FiEdit2 className="w-3 h-3" />
-                                  </button>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {showCustomContainer && (
-                  <div className="md:col-span-2 -mt-2">
                     <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter container type (e.g. Jar, Blister, Tube)"
-                        value={customContainerValue}
-                        onChange={(e) =>
-                          setCustomContainerValue(e.target.value)
-                        }
-                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => addCustomContainer(customContainerValue)}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
-                      >
-                        Add Type
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowCustomContainer(false);
-                          setCustomContainerValue("");
+                      <select
+                        value={supplierSelection}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setSupplierSelection(value);
+                          setFormData({ ...formData, supplierName: value });
                         }}
-                        className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm"
                       >
-                        Cancel
+                        <option value="">Select Supplier</option>
+                        {suppliers.map((s) => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddSupplierInvModal(true)}
+                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs whitespace-nowrap flex items-center gap-1"
+                      >
+                        <FiPlus className="w-3 h-3" /> Add
                       </button>
                     </div>
                   </div>
-                )}
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-500 uppercase">
-                    Amount (Sale Price) *
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={formData.salePrice}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        salePrice: Number(e.target.value),
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                    placeholder="Selling price"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-500 uppercase">
-                    Minimum Sale Price
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={formData.minSalePrice}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        minSalePrice: Number(e.target.value),
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
-                    placeholder="Min allowed in POS"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Purchase Price *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    value={formData.purchasePrice}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        purchasePrice: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    placeholder="Cost price"
-                  />
-                </div>
-
-                {shouldShowPerContainerField(
-                  formData.mainCategory,
-                  formData.subCategory,
-                ) && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">
-                        {getPerContainerLabel(
-                          formData.mainCategory,
-                          formData.subCategory,
-                          formData.containerType,
-                          formData.unit,
-                        )}
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={mlPerVialInput}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setMlPerVialInput(v);
-                          const num = Number(v);
-                          if (!Number.isNaN(num)) {
-                            setFormData({ ...formData, mlPerVial: num });
-                          }
-                        }}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
+                  {/* Company */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Company
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        value={formData.companyId}
+                        onChange={(e) => setFormData({ ...formData, companyId: e.target.value })}
+                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm"
+                      >
+                        <option value="">None</option>
+                        {companies.map((c) => (
+                          <option key={c._id} value={c._id}>{c.companyName}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddCompanyInvModal(true)}
+                        className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs whitespace-nowrap flex items-center gap-1"
+                      >
+                        <FiPlus className="w-3 h-3" /> Add
+                      </button>
                     </div>
-                    {isLiquidLikeCategory(
-                      formData.mainCategory,
-                      formData.subCategory,
-                    ) && (
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">
-                          Remaining {formatUnitForDisplay(formData.unit, "ml")}{" "}
-                          (Current {formData.containerType || "Container"})
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.1"
-                          value={
-                            formData.remainingMl || formData.mlPerVial || 0
-                          }
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              remainingMl: parseFloat(e.target.value) || 0,
-                            })
-                          }
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        />
-                        <p className="text-xs text-slate-500 mt-1">
-                          Track partially used liquid containePKR{" "}
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Expiry Date *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.expiryDate}
-                    onChange={(e) =>
-                      setFormData({ ...formData, expiryDate: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Purchase Date *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.purchaseDate}
-                    onChange={(e) =>
-                      setFormData({ ...formData, purchaseDate: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Supplier Name *
-                  </label>
-                  <select
-                    required
-                    value={supplierSelection}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === "other") {
-                        setShowOtherSupplier(true);
-                        setSupplierSelection("other");
-                        setFormData({ ...formData, supplierName: "" });
-                      } else {
-                        setShowOtherSupplier(false);
-                        setSupplierSelection(value);
-                        setFormData({ ...formData, supplierName: value });
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  >
-                    <option value="">Select Supplier</option>
-                    {suppliers.map((supplier) => (
-                      <option key={supplier.id} value={supplier.name}>
-                        {supplier.name}
-                      </option>
-                    ))}
-                    <option value="other">Other (Enter manually)</option>
-                  </select>
-                  {showOtherSupplier && (
+                  {/* Invoice No */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Invoice No
+                    </label>
                     <input
                       type="text"
-                      required
-                      placeholder="Enter supplier name"
-                      value={formData.supplierName}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          supplierName: e.target.value,
-                        })
-                      }
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 mt-2"
+                      value={formData.invoiceNo}
+                      onChange={(e) => setFormData({ ...formData, invoiceNo: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm"
+                      placeholder="INV-1"
                     />
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Low Stock Threshold
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={formData.lowStockThreshold}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        lowStockThreshold: parseInt(e.target.value) || 0,
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Description / Notes
-                  </label>
-                  <textarea
-                    value={formData.description}
-                    onChange={(e) =>
-                      setFormData({ ...formData, description: e.target.value })
-                    }
-                    rows="3"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    placeholder="Any special handling instructions"
-                  />
+                  {/* Invoice Date */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Invoice Date *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.invoiceDate}
+                      onChange={(e) => setFormData({ ...formData, invoiceDate: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm"
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Invoice Items */}
+              {invoiceItems.map((item, idx) => {
+                const updateItem = (patch) =>
+                  setInvoiceItems((prev) =>
+                    prev.map((it) => (it.id === item.id ? { ...it, ...patch } : it))
+                  );
+                const uPack = item.unitsPerPack || 1;
+                const subtotal = (item.qtyPacks || 0) * (item.buyPerPack || 0);
+                const discount = subtotal * ((item.defaultDiscount || 0) / 100);
+                const afterDiscount = subtotal - discount;
+                const tax = item.lineTaxType === "%"
+                  ? afterDiscount * ((item.lineTaxValue || 0) / 100)
+                  : (item.lineTaxValue || 0);
+                const lineTotal = afterDiscount + tax;
+                const totalItems = (item.qtyPacks || 0) * uPack;
+
+                // Per-item category options
+                const itemMainCatOptions = (() => {
+                  const hidden = getHiddenMainCategories();
+                  const custom = getCustomMainCategories();
+                  const merged = [...new Set([...catalogMainCategories, ...custom])];
+                  return merged.filter((mc) => !hidden.includes(mc));
+                })();
+                const itemSubCatOptions = (() => {
+                  if (!item.mainCategory) return [];
+                  const hidden = getHiddenSubCategories(item.mainCategory);
+                  const catalog = getSubCategories(item.mainCategory);
+                  const custom = getCustomSubCategories(item.mainCategory);
+                  return [...new Set([...catalog, ...custom])].filter((sc) => !hidden.includes(sc));
+                })();
+                const itemMedOptions = (() => {
+                  if (!item.mainCategory || !item.subCategory) return [];
+                  const hidden = getHiddenMedicines(item.mainCategory, item.subCategory);
+                  const catalog = getCatalogMedicines(item.mainCategory, item.subCategory);
+                  const custom = getCustomMedicines(item.mainCategory, item.subCategory);
+                  return [...new Set([...catalog, ...custom])].filter((m) => !hidden.includes(m));
+                })();
+
+                return (
+                  <div key={item.id} className="mt-4 rounded-xl border border-slate-200 bg-slate-50/50">
+                    {/* Card Header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white rounded-t-xl">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-bold text-purple-700">Item #{idx + 1}</span>
+                        {item.medicineName && (
+                          <span className="text-xs text-slate-500">
+                            {item.medicineName}
+                            {totalItems > 0 && <> {"\u00b7"} {totalItems} units</>}
+                          </span>
+                        )}
+                        {lineTotal > 0 && (
+                          <span className="text-xs font-semibold text-purple-700">
+                            PKR {lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => updateItem({ collapsed: !item.collapsed })}
+                          className="px-3 py-1 text-xs border border-slate-300 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"
+                        >
+                          {item.collapsed ? "Expand" : "Collapse"}
+                        </button>
+                        {invoiceItems.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInvoiceItems((prev) => prev.filter((it) => it.id !== item.id))
+                            }
+                            className="px-3 py-1 text-xs border border-red-200 rounded-lg hover:bg-red-50 text-red-600 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Card Body */}
+                    {!item.collapsed && (
+                      <div className="p-4">
+                        {/* 2-col: Category + Medicine */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Main Category *</label>
+                            <select
+                              value={item.mainCategory}
+                              onChange={(e) => {
+                                const main = e.target.value;
+                                const subs = (() => {
+                                  if (!main) return [];
+                                  const hidden = getHiddenSubCategories(main);
+                                  const catalog = getSubCategories(main);
+                                  const custom = getCustomSubCategories(main);
+                                  return [...new Set([...catalog, ...custom])].filter((sc) => !hidden.includes(sc));
+                                })();
+                                const sub = subs[0] || "";
+                                const meds = sub ? (() => {
+                                  const hidden = getHiddenMedicines(main, sub);
+                                  const catalog = getCatalogMedicines(main, sub);
+                                  const custom = getCustomMedicines(main, sub);
+                                  return [...new Set([...catalog, ...custom])].filter((m) => !hidden.includes(m));
+                                })() : [];
+                                updateItem({ mainCategory: main, subCategory: sub, category: sub || main, medicineName: meds[0] || "", unit: getCategoryUnit(main, sub), containerType: getDefaultContainerType(main, sub) });
+                              }}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                            >
+                              <option value="">Select</option>
+                              {itemMainCatOptions.map((mc) => (
+                                <option key={mc} value={mc}>{formatCatalogLabel(mc)}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Subcategory *</label>
+                            <select
+                              value={item.subCategory}
+                              disabled={!item.mainCategory}
+                              onChange={(e) => {
+                                const sub = e.target.value;
+                                const main = item.mainCategory;
+                                const meds = sub ? (() => {
+                                  const hidden = getHiddenMedicines(main, sub);
+                                  const catalog = getCatalogMedicines(main, sub);
+                                  const custom = getCustomMedicines(main, sub);
+                                  return [...new Set([...catalog, ...custom])].filter((m) => !hidden.includes(m));
+                                })() : [];
+                                updateItem({ subCategory: sub, category: sub || main, medicineName: meds[0] || "", unit: getCategoryUnit(main, sub), containerType: getDefaultContainerType(main, sub) });
+                              }}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white disabled:bg-slate-100"
+                            >
+                              <option value="">Select</option>
+                              {itemSubCatOptions.map((sc) => (
+                                <option key={sc} value={sc}>{formatCatalogLabel(sc)}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Medicine *</label>
+                            <select
+                              value={item.medicineName}
+                              disabled={!item.subCategory}
+                              onChange={(e) => updateItem({ medicineName: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white disabled:bg-slate-100"
+                            >
+                              <option value="">Select</option>
+                              {itemMedOptions.map((m) => (
+                                <option key={m} value={m}>{m}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                              Batch Number <span className="text-slate-400 text-xs">(Optional)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={item.batchNo}
+                              onChange={(e) => updateItem({ batchNo: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                              placeholder="Auto or manual batch reference"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Divider */}
+                        <div className="border-t border-slate-200 my-3" />
+
+                        {/* 4-col item fields */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="col-span-2">
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Generic Name</label>
+                            <input type="text" value={item.genericName}
+                              onChange={(e) => updateItem({ genericName: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                              placeholder="e.g. Paracetamol" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Barcode</label>
+                            <input type="text" value={item.barcode}
+                              onChange={(e) => updateItem({ barcode: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                              placeholder="Scan or type" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Expiry Date</label>
+                            <input type="date" value={item.expiryDate}
+                              onChange={(e) => updateItem({ expiryDate: e.target.value })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Qty (Packs) *</label>
+                            <input type="number" required min="0" value={item.qtyPacks}
+                              onChange={(e) => updateItem({ qtyPacks: Number(e.target.value) || 0 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Units/Pack *</label>
+                            <input type="number" required min="1" value={item.unitsPerPack}
+                              onChange={(e) => updateItem({ unitsPerPack: Number(e.target.value) || 1 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Buy/Pack *</label>
+                            <input type="number" required min="0" step="0.01" value={item.buyPerPack}
+                              onChange={(e) => updateItem({ buyPerPack: Number(e.target.value) || 0 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Sale/Pack *</label>
+                            <input type="number" required min="0" step="0.01" value={item.salePerPack}
+                              onChange={(e) => updateItem({ salePerPack: Number(e.target.value) || 0 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Buy/Unit</label>
+                            <input type="text" readOnly
+                              value={uPack > 0 ? ((item.buyPerPack || 0) / uPack).toFixed(2) : "0.00"}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-100 text-sm text-slate-600 cursor-not-allowed" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Sale/Unit</label>
+                            <input type="text" readOnly
+                              value={uPack > 0 ? ((item.salePerPack || 0) / uPack).toFixed(2) : "0.00"}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-100 text-sm text-slate-600 cursor-not-allowed" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Total Items</label>
+                            <input type="text" readOnly value={totalItems}
+                              className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-100 text-sm text-slate-600 cursor-not-allowed" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Min Stock</label>
+                            <input type="number" min="0" value={item.minStock}
+                              onChange={(e) => updateItem({ minStock: Number(e.target.value) || 0 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Default Discount (%)</label>
+                            <input type="number" min="0" max="100" step="0.01" value={item.defaultDiscount}
+                              onChange={(e) => updateItem({ defaultDiscount: Number(e.target.value) || 0 })}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                              placeholder="0" />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-xs font-medium text-slate-600 mb-1">
+                              Line Tax <span className="text-slate-400">(Optional)</span>
+                            </label>
+                            <div className="flex gap-2">
+                              <div className="flex rounded-lg border border-slate-300 overflow-hidden shrink-0">
+                                {["%", "PKR"].map((t) => (
+                                  <button key={t} type="button"
+                                    onClick={() => updateItem({ lineTaxType: t })}
+                                    className={`px-3 py-2 text-xs font-semibold transition-colors ${
+                                      item.lineTaxType === t
+                                        ? "bg-purple-600 text-white"
+                                        : "bg-white text-slate-600 hover:bg-slate-50"
+                                    }`}>{t}</button>
+                                ))}
+                              </div>
+                              <input type="number" min="0" step="0.01" value={item.lineTaxValue}
+                                onChange={(e) => updateItem({ lineTaxValue: Number(e.target.value) || 0 })}
+                                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                                placeholder={item.lineTaxType === "%" ? "e.g. 17" : "e.g. 50"} />
+                            </div>
+                          </div>
+
+                          {/* Line Total */}
+                          <div className="col-span-4 mt-1">
+                            <div className="flex items-center justify-between bg-purple-50 border border-purple-200 rounded-xl px-5 py-3">
+                              <div className="flex items-center gap-4 flex-wrap text-xs text-slate-500">
+                                <span>Subtotal: <span className="font-medium text-slate-700">PKR {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+                                {discount > 0 && <span>Discount: <span className="font-medium text-red-500">- PKR {discount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>}
+                                {tax > 0 && <span>Tax: <span className="font-medium text-slate-700">+ PKR {tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>}
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-sm font-semibold text-slate-700">Line Total:</span>
+                                <span className="text-lg font-bold text-purple-700">
+                                  PKR {lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Add Item button */}
+              <button
+                type="button"
+                onClick={() => setInvoiceItems((prev) => [...prev, createEmptyItem()])}
+                className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-dashed border-purple-300 text-purple-600 rounded-xl hover:bg-purple-50 text-sm font-medium transition-colors"
+              >
+                <FiPlus className="w-4 h-4" /> Add Another Item
+              </button>
               <div className="flex gap-3 pt-6">
                 <button
                   type="button"
@@ -3542,7 +3282,7 @@ export default function Medicines() {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg"
                 >
-                  {editingMedicine ? "Update Medicine" : "Add Medicine"}
+                  {editingMedicine ? "Update Invoice" : "Add Invoice"}
                 </button>
               </div>
             </form>
@@ -3589,6 +3329,229 @@ export default function Medicines() {
                   className="flex-1 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-xl font-semibold shadow-lg"
                 >
                   {confirmDialog.confirmLabel || "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Supplier (Invoice Details) Modal */}
+      {showAddSupplierInvModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4 flex items-center justify-between shrink-0">
+              <h3 className="text-lg font-bold text-white">Add New Supplier</h3>
+              <button onClick={() => setShowAddSupplierInvModal(false)} className="text-white hover:bg-white/20 p-2 rounded-lg">
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleAddSupplierInv} className="p-5 space-y-4 overflow-y-auto flex-1">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Supplier Name *</label>
+                <input type="text" required autoFocus
+                  value={newSupplierInvData.name}
+                  onChange={(e) => setNewSupplierInvData({ ...newSupplierInvData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter supplier name" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Select Company</label>
+                <select value={newSupplierInvData.companyId}
+                  onChange={(e) => setNewSupplierInvData({ ...newSupplierInvData, companyId: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">None</option>
+                  {companies.map((c) => <option key={c._id} value={c._id}>{c.companyName}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number</label>
+                <input type="text" value={newSupplierInvData.phone}
+                  onChange={(e) => setNewSupplierInvData({ ...newSupplierInvData, phone: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter phone number" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Tax ID</label>
+                <input type="text" value={newSupplierInvData.taxId}
+                  onChange={(e) => setNewSupplierInvData({ ...newSupplierInvData, taxId: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter tax ID" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Address</label>
+                <input type="text" value={newSupplierInvData.address}
+                  onChange={(e) => setNewSupplierInvData({ ...newSupplierInvData, address: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter address" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                <div className="flex gap-3">
+                  {["active", "inactive"].map((s) => (
+                    <button key={s} type="button"
+                      onClick={() => setNewSupplierInvData({ ...newSupplierInvData, status: s })}
+                      className={`flex-1 py-2 rounded-lg border text-sm font-medium capitalize transition-colors ${
+                        newSupplierInvData.status === s
+                          ? s === "active" ? "bg-green-600 border-green-600 text-white" : "bg-red-500 border-red-500 text-white"
+                          : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                      }`}>{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowAddSupplierInvModal(false)}
+                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={savingSupplier || !newSupplierInvData.name.trim()}
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+                  {savingSupplier && <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                  Add Supplier
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Company (Invoice Details) Modal */}
+      {showAddCompanyInvModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md overflow-hidden">
+            <div className="bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">Add New Company</h3>
+              <button onClick={() => setShowAddCompanyInvModal(false)} className="text-white hover:bg-white/20 p-2 rounded-lg">
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleAddCompanyInv} className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Company Name *</label>
+                <input type="text" required autoFocus
+                  value={newCompanyInvData.companyName}
+                  onChange={(e) => setNewCompanyInvData({ ...newCompanyInvData, companyName: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="Enter company name" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                <div className="flex gap-3">
+                  {["active", "inactive"].map((s) => (
+                    <button key={s} type="button"
+                      onClick={() => setNewCompanyInvData({ ...newCompanyInvData, status: s })}
+                      className={`flex-1 py-2 rounded-lg border text-sm font-medium capitalize transition-colors ${
+                        newCompanyInvData.status === s
+                          ? s === "active" ? "bg-green-600 border-green-600 text-white" : "bg-red-500 border-red-500 text-white"
+                          : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                      }`}>{s}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowAddCompanyInvModal(false)}
+                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={savingCompany || !newCompanyInvData.companyName.trim()}
+                  className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+                  {savingCompany && <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                  Add Company
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Company Modal */}
+      {showAddCompanyModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-4 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white">Add New Company</h3>
+              <button
+                onClick={() => {
+                  setShowAddCompanyModal(false);
+                  setNewCompanyData({ supplierName: "", contactPerson: "", phone: "", email: "" });
+                }}
+                className="text-white hover:bg-white/20 p-2 rounded-lg"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Company Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter company name"
+                  value={newCompanyData.supplierName}
+                  onChange={(e) =>
+                    setNewCompanyData({ ...newCompanyData, supplierName: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Contact Person
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter contact person name"
+                  value={newCompanyData.contactPerson}
+                  onChange={(e) =>
+                    setNewCompanyData({ ...newCompanyData, contactPerson: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  placeholder="Enter phone number"
+                  value={newCompanyData.phone}
+                  onChange={(e) =>
+                    setNewCompanyData({ ...newCompanyData, phone: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  placeholder="Enter email address"
+                  value={newCompanyData.email}
+                  onChange={(e) =>
+                    setNewCompanyData({ ...newCompanyData, email: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddCompanyModal(false);
+                    setNewCompanyData({ supplierName: "", contactPerson: "", phone: "", email: "" });
+                  }}
+                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddCompany}
+                  disabled={!newCompanyData.supplierName.trim()}
+                  className="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Company
                 </button>
               </div>
             </div>

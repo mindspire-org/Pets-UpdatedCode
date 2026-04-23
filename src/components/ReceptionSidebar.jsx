@@ -1,9 +1,11 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { FiGrid, FiUserPlus, FiCalendar, FiFileText, FiLogOut, FiClipboard, FiUsers, FiSettings } from 'react-icons/fi'
 
 export default function ReceptionSidebar({ open = false, onClose = () => {}, collapsed = false }) {
   const navigate = useNavigate()
+  const auth = JSON.parse(localStorage.getItem('reception_auth') || '{}')
+  
   const linkClass = ({ isActive }) => `flex items-center gap-3 px-4 py-3 rounded-xl transition text-sm font-medium ${
     isActive ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-sky-50 hover:text-sky-700'
   }`
@@ -14,32 +16,42 @@ export default function ReceptionSidebar({ open = false, onClose = () => {}, col
     navigate('/reception/login')
   }
 
+  const menuItems = useMemo(() => {
+    const allItems = [
+      { to: "/reception", icon: FiGrid, label: "Dashboard", end: true, id: 'dashboard' },
+      { to: "/reception/pets", icon: FiUserPlus, label: "Pets Registration", id: 'pets' },
+      { to: "/reception/clients", icon: FiUsers, label: "Clients Directory", id: 'clients' },
+      { to: "/reception/appointments", icon: FiCalendar, label: "Appointments", id: 'appointments' },
+      { to: "/reception/visits", icon: FiFileText, label: "Visit Records", id: 'visits' },
+      { to: "/reception/forms", icon: FiClipboard, label: "Medical Forms", id: 'forms' },
+      { to: "/reception/procedures", icon: FiClipboard, label: "Procedures", id: 'procedures' },
+      { to: "/reception/settings", icon: FiSettings, label: "Settings", id: 'settings' },
+    ]
+
+    // If user is admin, show all
+    if (auth.role === 'admin' || auth.role === 'Admin') return allItems;
+
+    // Filter based on permissions
+    const permissions = auth.sidebarPermissions?.reception;
+    if (!permissions) return allItems; // Default to show all if no permissions set
+
+    return allItems.filter(item => permissions.includes(item.id));
+  }, [auth.role, auth.sidebarPermissions]);
+
   const Nav = (
     <nav className="space-y-1">
-      <NavLink to="/reception" end className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiGrid size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Dashboard</span>}
-      </NavLink>
-      <NavLink to="/reception/pets" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiUserPlus size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Pets Registration</span>}
-      </NavLink>
-      <NavLink to="/reception/clients" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiUsers size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Clients Directory</span>}
-      </NavLink>
-      <NavLink to="/reception/appointments" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiCalendar size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Appointments</span>}
-      </NavLink>
-      <NavLink to="/reception/visits" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiFileText size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Visit Records</span>}
-      </NavLink>
-      <NavLink to="/reception/forms" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiClipboard size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Medical Forms</span>}
-      </NavLink>
-      <NavLink to="/reception/procedures" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiClipboard size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Procedures</span>}
-      </NavLink>
-      <NavLink to="/reception/settings" className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiSettings size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Settings</span>}
-      </NavLink>
+      {menuItems.map(item => (
+        <NavLink 
+          key={item.to}
+          to={item.to} 
+          end={item.end}
+          className={({isActive}) => `${linkClass({isActive})} ${collapsed ? 'justify-center px-2' : ''}`} 
+          onClick={onClose}
+        >
+          <item.icon size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> 
+          {!collapsed && <span>{item.label}</span>}
+        </NavLink>
+      ))}
       <button onClick={handleLogout} className={`${collapsed ? 'justify-center px-2' : ''} w-full mt-4 flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 transition text-sm font-medium`}>
         <FiLogOut size={collapsed ? 19 : 18} className={collapsed ? 'transition-transform hover:scale-110' : ''} /> {!collapsed && <span>Logout</span>}
       </button>

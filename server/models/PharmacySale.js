@@ -1,71 +1,29 @@
 import mongoose from 'mongoose';
 
+// ── saleItemSchema additions ─────────────────────────────────────────────
 const saleItemSchema = new mongoose.Schema({
   medicineId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'PharmacyMedicine',
     required: true
   },
-  medicineName: {
-    type: String,
-    required: true
-  },
-  batchNo: {
-    type: String,
-    required: true
-  },
-  category: {
-    type: String,
-    required: true
-  },
-  quantity: {
-    type: Number,
-    required: true,
-    min: 0
-  },
-  unit: {
-    type: String,
-    required: true
-  },
-  pricePerUnit: {
-    type: Number,
-    required: true,
-    min: 0
-  },
-  totalPrice: {
-    type: Number,
-    required: true,
-    min: 0
-  },
-  // For ml-based medicines
-  mlUsed: {
-    type: Number,
-    min: 0
-  },
-  // Remaining ml after this sale
-  remainingMlAfterSale: {
-    type: Number,
-    min: 0
-  },
-  // Expiry date of the batch
-  expiryDate: {
-    type: Date
-  },
-  // Dosage information
-  dosage: {
-    type: String,
-    trim: true
-  },
-  // Actual sale price used during transaction (may differ from original medicine price)
-  actualSalePrice: {
-    type: Number,
-    min: 0
-  },
-  // Actual total price for this item
-  actualTotalPrice: {
-    type: Number,
-    min: 0
-  }
+  medicineName: { type: String, required: true },
+  batchNo: { type: String, required: true },
+  category: { type: String, required: true },
+  quantity: { type: Number, required: true, min: 0 },
+  unit: { type: String, required: true },
+  pricePerUnit: { type: Number, required: true, min: 0 },
+  packPrice: { type: Number, default: 0, min: 0 },
+  sellBy: { type: String, enum: ['Loose', 'Pack'], default: 'Loose' },
+  lineDiscount: { type: Number, default: 0, min: 0 },      // % discount on this line
+  lineDiscountAmt: { type: Number, default: 0, min: 0 },   // PKR amount discounted
+  totalPrice: { type: Number, required: true, min: 0 },
+  mlUsed: { type: Number, min: 0 },
+  remainingMlAfterSale: { type: Number, min: 0 },
+  expiryDate: { type: Date },
+  dosage: { type: String, trim: true },
+  actualSalePrice: { type: Number, min: 0 },
+  actualTotalPrice: { type: Number, min: 0 }
 }, { _id: false });
 
 const pharmacySaleSchema = new mongoose.Schema({
@@ -77,29 +35,19 @@ const pharmacySaleSchema = new mongoose.Schema({
   // Links to patient and client for unified records
   patientId: { type: String, trim: true },
   clientId: { type: String, trim: true },
-  customerName: {
-    type: String,
-    trim: true
-  },
-  customerContact: {
-    type: String,
-    trim: true
-  },
-  petName: {
-    type: String,
-    trim: true
-  },
+  customerName: { type: String, trim: true },
+  customerContact: { type: String, trim: true },
+  customerAddress: { type: String, trim: true },
+  customerCnic: { type: String, trim: true },
+  petName: { type: String, trim: true },
   items: [saleItemSchema],
-  subtotal: {
-    type: Number,
-    required: true,
-    min: 0
-  },
-  discount: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
+  subtotal: { type: Number, required: true, min: 0 },
+  lineDiscounts: { type: Number, default: 0, min: 0 },       // total PKR of all line discounts
+  billDiscountPercent: { type: Number, default: 0, min: 0 }, // bill-level % discount
+  billDiscountAmount: { type: Number, default: 0, min: 0 },  // bill-level PKR discount
+  salesTaxPercent: { type: Number, default: 0, min: 0 },
+  salesTaxAmount: { type: Number, default: 0, min: 0 },
+  discount: { type: Number, default: 0, min: 0 },            // legacy total discount
   discountBreakdown: {
     medicine: { type: Number, default: 0, min: 0 },
     surgical: { type: Number, default: 0, min: 0 },

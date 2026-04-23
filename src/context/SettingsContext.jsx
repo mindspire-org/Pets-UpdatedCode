@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { settingsAPI } from '../services/api'
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
+import { settingsAPI, pharmacySettingsAPI } from '../services/api'
 
 const KEY = 'phms_settings_v1'
 const SettingsContext = createContext(null)
@@ -24,20 +24,32 @@ export function SettingsProvider({ children }){
   const [settings, setSettings] = useState(DEFAULTS)
   const [loading, setLoading] = useState(true)
 
-  // Load settings from MongoDB on mount
-  useEffect(() => {
-    loadSettings()
-  }, [])
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await settingsAPI.get('admin')
+      
+      // Check for pharmacy user first to load shared pharmacy settings
+      const pharmacyAuth = JSON.parse(localStorage.getItem('pharmacy_auth') || '{}')
+      const isPharmacy = !!pharmacyAuth.username
+      
+      let response;
+      if (isPharmacy) {
+        // Fetch from the NEW shared pharmacy settings collection
+        response = await pharmacySettingsAPI.get()
+      } else {
+        // Fallback for admin/other portals
+        const user = JSON.parse(localStorage.getItem('user') || '{}')
+        response = await settingsAPI.get(user.username || 'admin')
+      }
+
       if (response && response.data) {
-        const migrated = { ...response.data }
-        if (migrated.logo && !migrated.companyLogo) {
-          migrated.companyLogo = migrated.logo
-        }
+        const data = response.data
+        const migrated = { ...data }
+        
+        // Map pharmacy fields to global context fields
+        if (data.pharmacyName) migrated.companyName = data.pharmacyName
+        if (data.companyLogo) migrated.companyLogo = data.companyLogo
+        
         if (migrated.companyName) {
           migrated.companyName = normalizeCompanyName(migrated.companyName)
         }
@@ -59,7 +71,12 @@ export function SettingsProvider({ children }){
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  // Load settings from MongoDB on mount
+  useEffect(() => {
+    loadSettings()
+  }, [loadSettings])
 
   // Save settings to MongoDB whenever they change
   const saveToMongoDB = async (newSettings) => {
@@ -85,6 +102,7 @@ export function SettingsProvider({ children }){
     settings,
     loading,
     setSettings,
+    refresh: loadSettings,
     save: async (partial) => {
       const newSettings = { ...settings, ...partial }
       setSettings(newSettings)

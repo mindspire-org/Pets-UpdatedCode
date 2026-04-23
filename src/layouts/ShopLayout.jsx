@@ -47,6 +47,28 @@ export default function ShopLayout() {
 
   const shopUser = JSON.parse(localStorage.getItem('shop_auth') || '{}');
 
+  const filteredMenuItems = menuItems.filter(item => {
+    // If user is admin role, show everything
+    if (shopUser.role === 'admin' || shopUser.role === 'Admin') return true;
+    
+    // If no permissions defined for shop portal specifically, show all (fallback)
+    const permissions = shopUser.sidebarPermissions?.shop;
+    if (!permissions) return true;
+    
+    // Check based on the path mapping
+    const pathToId = {
+      "/shop": "dashboard",
+      "/shop/products": "products",
+      "/shop/pos": "pos",
+      "/shop/suppliers": "suppliers",
+      "/shop/reports": "reports",
+      "/shop/settings": "settings"
+    };
+    
+    const pageId = pathToId[item.path];
+    return pageId ? permissions.includes(pageId) : true;
+  });
+
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       {/* Top Header */}
@@ -115,7 +137,7 @@ export default function ShopLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {menuItems.map((item) => {
+          {filteredMenuItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.path, item.exact);
             

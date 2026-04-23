@@ -283,21 +283,26 @@ export default function PharmacyReports() {
         pharmacyMedicinesAPI.getAll()
       ]);
 
-      const allSales = salesResponse.data || salesResponse.data?.data || [];
+      // Extract data from API response - handle both { data: [...] } and { data: { data: [...] } } formats
+      const allSales = salesResponse?.data?.data || salesResponse?.data || [];
 
-      // Filter sales by selected date range on frontend to avoid timezone issues
-      const start = new Date(`${dateRange.startDate}T00:00:00.000Z`);
-      const end = new Date(`${dateRange.endDate}T23:59:59.999Z`);
+      // Filter sales by selected date range using local dates to avoid timezone issues
+      const start = new Date(dateRange.startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(dateRange.endDate);
+      end.setHours(23, 59, 59, 999);
 
       const salesData = allSales
         .filter((sale) => {
+          if (!sale.createdAt) return false;
           const created = new Date(sale.createdAt);
           return created >= start && created <= end;
         })
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setSales(salesData);
 
-      // Apply invoice + status Filters       const needle = invoiceSearch.trim().toLowerCase();
+      // Apply invoice + status Filters
+      const needle = invoiceSearch.trim().toLowerCase();
       const withInvoice = needle
         ? salesData.filter(sale => (sale.invoiceNumber || '').toLowerCase().includes(needle))
         : salesData;
@@ -307,7 +312,8 @@ export default function PharmacyReports() {
           ? withInvoice.filter(sale => saleStatus(sale) === 'Pending')
           : withInvoice;
       setFilteredSales(withStatus);
-      const medicinesData = medicinesResponse.data || [];
+      // Extract medicines data from API response
+      const medicinesData = medicinesResponse?.data?.data || medicinesResponse?.data || [];
       setMedicines(medicinesData);
       
       calculateStats(salesData, medicinesData);
@@ -345,7 +351,7 @@ export default function PharmacyReports() {
   const calculateStats = (salesData, medicinesData) => {
     const totalSales = salesData.length;
     const totalRevenue = salesData.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-    const totalItems = salesData.reduce((sum, sale) => sum + (sale.items?.length || 0), 0);
+    const totalItems = salesData.reduce((sum, sale) => sum + (sale.items?.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0) || 0), 0);
     const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
 
     // Calculate total cost and profit
@@ -353,32 +359,57 @@ export default function PharmacyReports() {
     let totalProfit = 0;
 
     salesData.forEach(sale => {
-      sale.items?.forEach(item => {
-        const medId = item.medicineId;
-        if (!medId) return;
-        const medicine = medicinesData.find(m => m._id === medId);
-        if (!medicine) return;
+      // Use totalCost from the sale record if it exists and is valid
+      if (sale.totalCost > 0) {
+        totalCost += sale.totalCost;
+        totalProfit += (sale.totalAmount - sale.totalCost);
+        return;
+      }
 
+      // Fallback to item-by-item calculation for older records
+      sale.items?.forEach(item => {
         const qty = Number(item.quantity || 0);
         const itemRevenue = Number(item.totalPrice || 0);
-        const purchasePrice = Number(medicine.purchasePrice || 0);
+
+        // Try to find medicine by ID (handle both string and ObjectId)
+        const medId = item.medicineId;
+        let medicine = null;
+        if (medId) {
+          medicine = medicinesData.find(m => 
+            m._id === medId || 
+            String(m._id) === String(medId)
+          );
+        }
+        
+        // Fallback: find by medicineName and batchNo if ID match fails
+        if (!medicine && item.medicineName) {
+          medicine = medicinesData.find(m => 
+            m.medicineName === item.medicineName && 
+            (m.batchNo === item.batchNo || (!m.batchNo && !item.batchNo))
+          );
+        }
+
+        // Use stored purchasePrice from item if available (more accurate for historical data)
+        // Otherwise fallback to current medicine purchasePrice
+        let purchasePrice = 0;
+        if (item.purchasePrice > 0) {
+          purchasePrice = item.purchasePrice;
+        } else if (medicine?.purchasePrice > 0) {
+          purchasePrice = medicine.purchasePrice;
+        }
 
         let itemCost = 0;
 
-        if (isInjectionLike(medicine.category || medicine.subCategory)) {
-          // For injections: cost based on ml used from vial
-          const mlPerVial = Number(medicine.mlPerVial || 0);
+        // Check if this is an injection-like item
+        const category = item.category || medicine?.category || '';
+        if (isInjectionLike(category)) {
+          const mlPerVial = Number(item.mlPerVial || medicine?.mlPerVial || 0);
           const mlUsed = Number(item.mlUsed || 0);
           if (mlPerVial > 0 && mlUsed > 0 && purchasePrice > 0) {
-            const fractionOfVial = mlUsed / mlPerVial;
-            itemCost = purchasePrice * fractionOfVial;
+            itemCost = (purchasePrice / mlPerVial) * mlUsed;
           }
         } else {
-          // For non-injections: approximate per-unit cost from purchasePrice and stock
-          const currentStock = Number(medicine.quantity || 0);
-          const totalUnits = currentStock + qty;
-          const unitCost = totalUnits > 0 ? (purchasePrice / totalUnits) : 0;
-          itemCost = qty * unitCost;
+          itemCost = qty * purchasePrice;
         }
 
         totalCost += itemCost;
@@ -402,61 +433,86 @@ export default function PharmacyReports() {
   const calculateMedicineAnalysis = (salesData, medicinesData) => {
     const medicineStats = {};
 
-    // Initialize medicine stats
-    medicinesData.forEach(medicine => {
-      const totalPurchase = Number(medicine.purchasePrice || 0);
-      medicineStats[medicine._id] = {
-        id: medicine._id,
-        name: medicine.medicineName,
-        category: medicine.category,
-        batchNo: medicine.batchNo,
-        purchasePrice: totalPurchase,
-        salePrice: medicine.salePrice || 0,
-        currentStock: medicine.quantity || 0,
-        unit: medicine.unit,
-        quantitySold: 0,
-        totalRevenue: 0,
-        totalCost: 0,
-        totalProfit: 0,
-        profitMargin: 0,
-        salesCount: 0
-      };
-    });
+    // Helper to get or create medicine stats
+    const getOrCreateStats = (item) => {
+      const medId = item.medicineId;
+      
+      // Try to find existing medicine in inventory
+      let medicine = null;
+      if (medId) {
+        medicine = medicinesData.find(m => 
+          m._id === medId || String(m._id) === String(medId)
+        );
+      }
+      
+      // Fallback: find by medicineName and batchNo
+      if (!medicine && item.medicineName) {
+        medicine = medicinesData.find(m => 
+          m.medicineName === item.medicineName && 
+          (m.batchNo === item.batchNo || (!m.batchNo && !item.batchNo))
+        );
+      }
+
+      // Use medicine ID from inventory if found, otherwise use sale item ID or generate key
+      const key = medicine?._id || medId || `${item.medicineName}_${item.batchNo || 'N/A'}`;
+
+      if (!medicineStats[key]) {
+        medicineStats[key] = {
+          id: key,
+          name: medicine?.medicineName || item.medicineName || 'Unknown Medicine',
+          category: medicine?.category || item.category || 'Medicine',
+          batchNo: medicine?.batchNo || item.batchNo || 'N/A',
+          purchasePrice: medicine?.purchasePrice || item.purchasePrice || 0,
+          salePrice: medicine?.salePrice || item.pricePerUnit || 0,
+          currentStock: medicine?.quantity || 0,
+          unit: medicine?.unit || item.unit || 'pieces',
+          mlPerVial: medicine?.mlPerVial || item.mlPerVial || 0,
+          quantitySold: 0,
+          totalRevenue: 0,
+          totalCost: 0,
+          totalProfit: 0,
+          profitMargin: 0,
+          salesCount: 0
+        };
+      }
+
+      return { stats: medicineStats[key], medicine };
+    };
 
     // Calculate sales data for each medicine
     salesData.forEach(sale => {
       sale.items?.forEach(item => {
-        const stats = medicineStats[item.medicineId];
-        if (stats) {
-          const quantity = Number(item.quantity || 0);
-          const revenue = Number(item.totalPrice || 0);
-          let cost = 0;
+        const { stats } = getOrCreateStats(item);
+        
+        const quantity = Number(item.quantity || 0);
+        const revenue = Number(item.totalPrice || 0);
+        
+        // Use stored purchasePrice from item if available (more accurate)
+        let purchasePrice = item.purchasePrice > 0 ? item.purchasePrice : stats.purchasePrice;
+        
+        let cost = 0;
+        const category = item.category || stats.category;
 
-          if (isInjectionLike(stats.category)) {
-            const mlPerVial = Number(medicinesData.find(m => m._id === stats.id)?.mlPerVial || 0);
-            const mlUsed = Number(item.mlUsed || 0);
-            if (mlPerVial > 0 && mlUsed > 0 && stats.purchasePrice > 0) {
-              const fractionOfVial = mlUsed / mlPerVial;
-              cost = stats.purchasePrice * fractionOfVial;
-            }
-          } else {
-            const currentStock = Number(stats.currentStock || 0);
-            const totalUnits = currentStock + quantity;
-            const unitCost = totalUnits > 0 ? (stats.purchasePrice / totalUnits) : 0;
-            cost = quantity * unitCost;
+        if (isInjectionLike(category)) {
+          const mlPerVial = Number(item.mlPerVial || stats.mlPerVial || 0);
+          const mlUsed = Number(item.mlUsed || 0);
+          if (mlPerVial > 0 && mlUsed > 0 && purchasePrice > 0) {
+            cost = (purchasePrice / mlPerVial) * mlUsed;
           }
-
-          stats.quantitySold += quantity;
-          stats.totalRevenue += revenue;
-          stats.totalCost += cost;
-          stats.totalProfit += (revenue - cost);
-          stats.salesCount += 1;
-          stats.profitMargin = stats.totalRevenue > 0 ? (stats.totalProfit / stats.totalRevenue) * 100 : 0;
+        } else {
+          cost = quantity * purchasePrice;
         }
+
+        stats.quantitySold += quantity;
+        stats.totalRevenue += revenue;
+        stats.totalCost += cost;
+        stats.totalProfit += (revenue - cost);
+        stats.salesCount += 1;
+        stats.profitMargin = stats.totalRevenue > 0 ? (stats.totalProfit / stats.totalRevenue) * 100 : 0;
       });
     });
 
-    // Convert to array and sort by profit
+    // Convert to array and sort by profit (descending)
     const analysisArray = Object.values(medicineStats)
       .filter(med => med.quantitySold > 0 || med.currentStock > 0)
       .sort((a, b) => b.totalProfit - a.totalProfit);
@@ -957,6 +1013,26 @@ export default function PharmacyReports() {
       {/* Profit Analysis Tab */}
       {activeTab === 'profit' && (
         <div className="space-y-6">
+          {/* Profit Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 text-white">
+              <p className="text-sm opacity-90">Total Revenue</p>
+              <p className="text-2xl font-bold">PKR {stats.totalRevenue.toLocaleString()}</p>
+            </div>
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 text-white">
+              <p className="text-sm opacity-90">Total Cost</p>
+              <p className="text-2xl font-bold">PKR {stats.totalCost.toLocaleString()}</p>
+            </div>
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 text-white">
+              <p className="text-sm opacity-90">Net Profit</p>
+              <p className="text-2xl font-bold">PKR {stats.totalProfit.toLocaleString()}</p>
+            </div>
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 text-white">
+              <p className="text-sm opacity-90">Profit Margin</p>
+              <p className="text-2xl font-bold">{stats.profitMargin.toFixed(1)}%</p>
+            </div>
+          </div>
+
           {/* Top Profitable Medicines */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <h2 className="text-lg font-semibold text-slate-800 mb-4">Most Profitable Medicines</h2>

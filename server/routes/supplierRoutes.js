@@ -12,10 +12,13 @@ const router = express.Router();
 // Get all suppliers (optionally filter by portal)
 router.get("/", async (req, res) => {
   try {
-    const { portal } = req.query;
+    const { portal, status } = req.query;
     const q = {};
     if (portal && portal !== "all") {
       q.portal = portal;
+    }
+    if (status && status !== "all") {
+      q.status = status;
     }
     const suppliers = await Supplier.find(q).sort({ createdAt: -1 });
     res.json({ success: true, data: suppliers });
@@ -557,10 +560,132 @@ router.post("/:id/payment", async (req, res) => {
 
     await supplier.save();
 
+    // Also update PharmacyPurchase records for this invoice
+    if (invoiceNumber) {
+      try {
+        // Find all PharmacyPurchase rows for this invoice
+        const pharmPurchases = await PharmacyPurchase.find({
+          invoiceNo: invoiceNumber,
+          supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") },
+        });
+
+        if (pharmPurchases.length > 0) {
+          // Distribute payment proportionally across rows by netTotal
+          const invoiceNetTotal = pharmPurchases.reduce((s, p) => s + Number(p.netTotal || p.totalAmount || 0), 0);
+          let remaining = paymentAmount;
+
+          for (const pp of pharmPurchases) {
+            const rowTotal = Number(pp.netTotal || pp.totalAmount || 0);
+            const proportion = invoiceNetTotal > 0 ? rowTotal / invoiceNetTotal : 1 / pharmPurchases.length;
+            const rowPayment = Math.min(
+              Math.round(paymentAmount * proportion * 100) / 100,
+              Math.max(0, rowTotal - Number(pp.amountPaid || 0)),
+              remaining
+            );
+            pp.amountPaid = Number(pp.amountPaid || 0) + rowPayment;
+            remaining -= rowPayment;
+            // Update paymentStatus
+            const rowRemaining = rowTotal - pp.amountPaid;
+            if (rowRemaining <= 0.01) {
+              pp.paymentStatus = "Paid";
+            } else if (pp.amountPaid > 0) {
+              pp.paymentStatus = "Partial";
+            }
+            await pp.save();
+          }
+        }
+      } catch (err) {
+        console.error("Error updating PharmacyPurchase payment:", err);
+      }
+    }
+
     res.json({ success: true, data: supplier });
   } catch (error) {
     console.error("Backend: Error recording payment:", error);
     res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Get PharmacyPurchase invoices for a supplier (by name) — for Record Payment dropdown
+router.get("/:id/pharmacy-invoices", async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id).lean();
+    if (!supplier) return res.status(404).json({ success: false, message: "Supplier not found" });
+
+    // Group by invoiceNo, summing netTotal and amountPaid across all rows for that invoice
+    const purchases = await PharmacyPurchase.find({
+      supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
+    }).sort({ purchaseDate: -1 }).lean();
+
+    // Aggregate by invoiceNo
+    const invoiceMap = {};
+    for (const p of purchases) {
+      const key = p.invoiceNo;
+      if (!invoiceMap[key]) {
+        invoiceMap[key] = {
+          invoiceNo: p.invoiceNo,
+          purchaseDate: p.purchaseDate,
+          supplierName: p.supplierName,
+          netTotal: 0,
+          amountPaid: 0,
+          paymentStatus: p.paymentStatus || "Pending",
+          purchaseIds: [],
+        };
+      }
+      invoiceMap[key].netTotal    += Number(p.netTotal    || p.totalAmount || 0);
+      invoiceMap[key].amountPaid  += Number(p.amountPaid  || 0);
+      invoiceMap[key].purchaseIds.push(String(p._id));
+    }
+
+    const invoices = Object.values(invoiceMap).map(inv => ({
+      ...inv,
+      remaining: Math.max(0, inv.netTotal - inv.amountPaid),
+    }));
+
+    res.json({ success: true, data: invoices });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Get all individual supplied items for a supplier from PharmacyPurchase — for Supplied Items tab
+router.get("/:id/pharmacy-items", async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id).lean();
+    if (!supplier) return res.status(404).json({ success: false, message: "Supplier not found" });
+
+    const purchases = await PharmacyPurchase.find({
+      supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
+    }).sort({ purchaseDate: -1 }).lean();
+
+    // Flatten all items with invoice context
+    const items = [];
+    for (const p of purchases) {
+      for (const item of (p.items || [])) {
+        items.push({
+          invoiceNo:    p.invoiceNo,
+          purchaseDate: p.purchaseDate,
+          medicineName: item.medicineName,
+          genericName:  item.genericName  || "",
+          batchNo:      item.batchNo      || "",
+          category:     item.subCategory  || item.category || "",
+          qtyPacks:     item.qtyPacks     || 0,
+          unitsPerPack: item.unitsPerPack || 1,
+          totalItems:   item.totalItems   || item.quantity || 0,
+          unit:         item.unit         || "pcs",
+          buyPerPack:   item.buyPerPack   || item.purchasePrice || 0,
+          buyPerUnit:   item.buyPerUnit   || item.purchasePrice || 0,
+          salePerPack:  item.salePerPack  || item.salePrice || 0,
+          salePerUnit:  item.salePerUnit  || item.salePrice || 0,
+          lineTotal:    item.lineTotal    || item.totalCost || 0,
+          expiryDate:   item.expiryDate,
+        });
+      }
+    }
+
+    res.json({ success: true, data: items });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

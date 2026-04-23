@@ -39,6 +39,11 @@ const userSchema = new mongoose.Schema({
   },
   lastLogin: {
     type: Date
+  },
+  sidebarPermissions: {
+    type: Map,
+    of: [String],
+    default: {}
   }
 }, {
   timestamps: true

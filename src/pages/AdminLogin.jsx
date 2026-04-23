@@ -27,7 +27,8 @@ export default function AdminLogin() {
           localStorage.setItem('admin_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role
+            role: user.role,
+            sidebarPermissions: user.sidebarPermissions || {}
           }))
           try { addActivity({ user: 'Admin', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/admin')

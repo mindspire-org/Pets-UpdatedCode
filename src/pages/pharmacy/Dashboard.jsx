@@ -14,7 +14,10 @@ export default function PharmacyDashboard() {
     expired: 0,
     todaySales: 0,
     todayRevenue: 0,
-    inventoryValue: 0
+    todayProfit: 0,
+    todayCost: 0,
+    inventoryValue: 0,
+    inventoryCost: 0
   });
   const [recentSales, setRecentSales] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,11 +34,15 @@ export default function PharmacyDashboard() {
     setDateRange(newDateRange);
   };
 
-  // Date filtering function
+  // Date filtering function - uses proper Date comparison to avoid timezone issues
   const isDateInRange = (dateStr) => {
     if (!dateStr) return false;
-    const date = new Date(dateStr).toISOString().slice(0,10);
-    return date >= dateRange.fromDate && date <= dateRange.toDate;
+    const date = new Date(dateStr);
+    const start = new Date(dateRange.fromDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateRange.toDate);
+    end.setHours(23, 59, 59, 999);
+    return date >= start && date <= end;
   };
 
   const fetchDashboardData = async () => {
@@ -45,35 +52,56 @@ export default function PharmacyDashboard() {
       
       // Fetch data with individual error handling
       let totalMedicines = 0, lowStock = 0, expiring = 0, expired = 0;
-      let todaySales = 0, todayRevenue = 0, inventoryValue = 0;
+      let todaySales = 0, todayRevenue = 0, inventoryValue = 0, inventoryCost = 0;
       let sales = [];
 
       // Get medicines data
       try {
         const medicinesRes = await pharmacyMedicinesAPI.getAll();
-        const medicines = medicinesRes.data || [];
+        // Handle both { data: [...] } and { data: { data: [...] } } formats
+        const medicines = medicinesRes?.data?.data || medicinesRes?.data || [];
         totalMedicines = medicines.length;
         
         // Calculate inventory stats manually
         const today = new Date();
+        today.setHours(0, 0, 0, 0);
         const thirtyDaysFromNow = new Date();
         thirtyDaysFromNow.setDate(today.getDate() + 30);
+        thirtyDaysFromNow.setHours(23, 59, 59, 999);
+        
+        // Calculate total inventory value and cost
+        let totalInventoryValue = 0;
+        let totalInventoryCost = 0;
         
         medicines.forEach(med => {
-          // Low stock check
-          if (med.quantity <= (med.lowStockThreshold || 10)) {
+          const qty = Number(med.quantity) || 0;
+          const purchasePrice = Number(med.purchasePrice) || 0;
+          const salePrice = Number(med.salePrice) || 0;
+          
+          // Inventory value at sale price (potential revenue)
+          totalInventoryValue += qty * salePrice;
+          // Inventory cost at purchase price (actual investment)
+          totalInventoryCost += qty * purchasePrice;
+          
+          // Low stock check - use minStock if available, fallback to lowStockThreshold, then default 10
+          const threshold = med.minStock || med.lowStockThreshold || 10;
+          if (qty <= threshold) {
             lowStock++;
           }
           
           // Expiry checks
-          const expiryDate = new Date(med.expiryDate);
-          if (expiryDate < today) {
-            expired++;
-          } else if (expiryDate <= thirtyDaysFromNow) {
-            expiring++;
+          if (med.expiryDate) {
+            const expiryDate = new Date(med.expiryDate);
+            if (expiryDate < today) {
+              expired++;
+            } else if (expiryDate <= thirtyDaysFromNow) {
+              expiring++;
+            }
           }
-          
         });
+        
+        inventoryValue = totalInventoryValue;
+        inventoryCost = totalInventoryCost;
       } catch (error) {
         console.error('Error fetching medicines:', error);
       }
@@ -81,24 +109,43 @@ export default function PharmacyDashboard() {
       // Get sales data
       try {
         const salesRes = await pharmacySalesAPI.getAll();
-        sales = salesRes.data || [];
-        setRecentSales(sales.slice(0, 5));
+        // Handle both { data: [...] } and { data: { data: [...] } } formats
+        sales = salesRes?.data?.data || salesRes?.data || [];
         
-        // Filter sales by date range
+        // Show recent 5 sales (unfiltered) for the Recent Sales table
+        const sortedSales = sales.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setRecentSales(sortedSales.slice(0, 5));
+        
+        // Filter sales by date range for stats calculation
         const filteredSales = sales.filter(sale => isDateInRange(sale.createdAt));
-        setRecentSales(filteredSales.slice(0, 5));
         
         todaySales = filteredSales.length;
         todayRevenue = filteredSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-        inventoryValue = filteredSales.reduce((sum, sale) => {
-          const saleValue = (sale.items || []).reduce((itemSum, item) => {
+        
+        // Calculate profit and cost for the date range
+        let todayCost = 0;
+        let todayProfit = 0;
+        
+        filteredSales.forEach(sale => {
+          // Use stored totalCost if available
+          if (sale.totalCost > 0) {
+            todayCost += sale.totalCost;
+            todayProfit += (sale.totalAmount - sale.totalCost);
+            return;
+          }
+          
+          // Otherwise calculate from items
+          sale.items?.forEach(item => {
             const qty = Number(item.quantity) || 0;
-            const unitCost =
-              Number(item.purchasePrice ?? item.costPrice ?? item.price ?? (qty ? (item.totalPrice || 0) / qty : 0)) || 0;
-            return itemSum + qty * unitCost;
-          }, 0);
-          return sum + saleValue;
-        }, 0);
+            const itemRevenue = Number(item.totalPrice) || 0;
+            // Use stored purchasePrice from sale item (most accurate for historical data)
+            const purchasePrice = Number(item.purchasePrice) || 0;
+            const itemCost = qty * purchasePrice;
+            
+            todayCost += itemCost;
+            todayProfit += (itemRevenue - itemCost);
+          });
+        });
       } catch (error) {
         console.error('Error fetching sales:', error);
       }
@@ -110,7 +157,10 @@ export default function PharmacyDashboard() {
         expired,
         todaySales,
         todayRevenue,
-        inventoryValue
+        todayProfit,
+        todayCost,
+        inventoryValue,
+        inventoryCost
       });
 
     } catch (error) {
@@ -213,14 +263,14 @@ export default function PharmacyDashboard() {
           </div>
 
           {/* Today's Performance */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
                   <FiShoppingCart className="w-5 h-5 text-blue-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-slate-600">Today's Sales</p>
+                  <p className="text-sm text-slate-600">Period Sales</p>
                   <p className="text-2xl font-bold text-slate-900">{stats.todaySales}</p>
                 </div>
               </div>
@@ -232,7 +282,7 @@ export default function PharmacyDashboard() {
                   <FiDollarSign className="w-5 h-5 text-green-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-slate-600">Today's Revenue</p>
+                  <p className="text-sm text-slate-600">Revenue</p>
                   <p className="text-2xl font-bold text-slate-900">PKR {stats.todayRevenue.toLocaleString()}</p>
                 </div>
               </div>
@@ -240,12 +290,24 @@ export default function PharmacyDashboard() {
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <FiTrendingUp className="w-5 h-5 text-purple-600" />
+                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                  <FiDollarSign className="w-5 h-5 text-red-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-slate-600">Inventory Value</p>
-                  <p className="text-2xl font-bold text-slate-900">PKR {stats.inventoryValue.toLocaleString()}</p>
+                  <p className="text-sm text-slate-600">Cost</p>
+                  <p className="text-2xl font-bold text-slate-900">PKR {stats.todayCost.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                  <FiTrendingUp className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-slate-600">Net Profit</p>
+                  <p className="text-2xl font-bold text-emerald-600">PKR {stats.todayProfit.toLocaleString()}</p>
                 </div>
               </div>
             </div>
@@ -255,6 +317,33 @@ export default function PharmacyDashboard() {
               title="Pharmacy" 
               color="blue" 
             />
+          </div>
+
+          {/* Inventory Summary */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl shadow-sm border border-purple-200 p-6">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <FiPackage className="w-5 h-5 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-purple-700">Inventory Value (Potential Revenue)</p>
+                  <p className="text-2xl font-bold text-purple-900">PKR {stats.inventoryValue.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl shadow-sm border border-orange-200 p-6">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+                  <FiTrendingUp className="w-5 h-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-orange-700">Inventory Cost (Investment)</p>
+                  <p className="text-2xl font-bold text-orange-900">PKR {stats.inventoryCost.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Quick Links */}

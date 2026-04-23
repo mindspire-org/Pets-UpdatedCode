@@ -9,7 +9,7 @@ import {
   FiPrinter,
   FiArrowLeft,
 } from "react-icons/fi";
-import { pharmacyHistoryAPI } from "../../services/api";
+import { pharmacyHistoryAPI, settingsAPI } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
 import Modal from "../../components/Modal";
 
@@ -49,7 +49,26 @@ export default function SalesHistory() {
     isOpen: false,
     saleId: null,
   });
+  const [hospitalSettings, setHospitalSettings] = useState(null);
   const printRef = useRef();
+
+  // Get logged-in user info
+  const pharmacyUser = JSON.parse(localStorage.getItem("pharmacy_auth") || "{}");
+  const loggedInUser = pharmacyUser.name || pharmacyUser.username
+    ? `${pharmacyUser.name || pharmacyUser.username}${pharmacyUser.role ? `-${pharmacyUser.role}` : ''}`
+    : "—";
+
+  useEffect(() => {
+    fetchHospitalSettings();
+  }, []);
+
+  const fetchHospitalSettings = async () => {
+    try {
+      const user = JSON.parse(localStorage.getItem("user") || "{}");
+      const response = await settingsAPI.get(user.username || "admin");
+      setHospitalSettings(response.data);
+    } catch {}
+  };
 
   useEffect(() => {
     // Only fetch on initial load and page changes, NOT on filter changes
@@ -180,6 +199,104 @@ export default function SalesHistory() {
     windowPrint.document.write("</body></html>");
     windowPrint.document.close();
     windowPrint.print();
+  };
+
+  const reprintSale = (sale) => {
+    const printWindow = window.open("", "_blank", "width=320,height=900,left=100,top=50,toolbar=0,menubar=0,scrollbars=1");
+    const fmt = (n) => Number(n || 0).toFixed(2);
+    const shopName = hospitalSettings?.companyName || "Abbottabad Pet Hospital";
+    const shopAddress = hospitalSettings?.address || "";
+    const shopPhone = hospitalSettings?.phone || "";
+
+    const itemRows = (sale.items || []).map((item) => {
+      const discAmt = Number(item.lineDiscountAmt || 0);
+      const sellBy = item.sellBy || "Loose";
+      const typeLabel = sellBy.toLowerCase() === "pack" ? "Pack" : "Loose";
+      return `
+        <tr>
+          <td style="padding:3px 0;vertical-align:top;">
+            ${item.medicineName}
+            ${discAmt > 0 ? `<br><span style="font-size:10px;color:#555;">Disc: Rs ${fmt(discAmt)}</span>` : ""}
+          </td>
+          <td style="text-align:center;padding:3px 4px;vertical-align:top;">${typeLabel}</td>
+          <td style="text-align:center;padding:3px 4px;vertical-align:top;">${item.quantity}</td>
+          <td style="text-align:right;padding:3px 0;vertical-align:top;">${fmt(item.totalPrice)}</td>
+        </tr>`;
+    }).join("");
+
+    const lineDiscounts = Number(sale.lineDiscounts || 0);
+    const billDiscount = Number(sale.billDiscountAmount || 0);
+    const billDiscPct = Number(sale.billDiscountPercent || 0);
+    const salesTaxPct = Number(sale.salesTaxPercent || 0);
+    const salesTaxAmt = Number(sale.salesTaxAmount || 0);
+
+    const isCredit = sale.paymentMethod === 'Credit';
+    const received = Number(sale.receivedAmount || 0);
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Invoice</title>
+<style>
+  @page{size:80mm auto;margin:4mm;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Courier New',Courier,monospace;font-size:12px;color:#000;background:#fff;width:72mm;}
+  .center{text-align:center;}.right{text-align:right;}.bold{font-weight:bold;}
+  .dashed{border-top:1px dashed #000;margin:6px 0;}
+  table{width:100%;border-collapse:collapse;}
+  td,th{font-size:12px;}
+  .totals-table td{padding:2px 0;}
+  .grand-total td{font-weight:bold;font-size:13px;border-top:1px dashed #000;padding-top:4px;}
+  .credit-summary td { padding: 1px 0; font-size: 11px; }
+</style></head><body>
+  <div class="center bold" style="font-size:15px;letter-spacing:1px;">${shopName.toUpperCase()}</div>
+  ${shopAddress ? `<div class="center" style="font-size:10px;">${shopAddress}</div>` : ""}
+  ${shopPhone ? `<div class="center" style="font-size:10px;">Tel: ${shopPhone}</div>` : ""}
+  <div class="dashed"></div>
+  <div class="center bold" style="font-size:13px;">Retail Invoice</div>
+  <div class="dashed"></div>
+  <table class="totals-table">
+    <tr><td>Date</td><td class="right">${new Date(sale.createdAt).toLocaleString()}</td></tr>
+    <tr><td>${isCredit ? 'Credit Customer' : 'Walk-in'}</td><td class="right">${sale.customerName || "Walk-in Customer"}</td></tr>
+    ${sale.customerContact ? `<tr><td>Phone</td><td class="right">${sale.customerContact}</td></tr>` : ""}
+    <tr><td>Bill No</td><td class="right">${sale.invoiceNumber || "---"}</td></tr>
+    <tr><td>Payment Mode</td><td class="right">${sale.paymentMethod || "Cash"}</td></tr>
+  </table>
+  <div class="dashed"></div>
+  <table>
+    <thead>
+      <tr>
+        <th style="text-align:left;padding-bottom:3px;border-bottom:1px dashed #000;">Item</th>
+        <th style="text-align:center;padding-bottom:3px;border-bottom:1px dashed #000;width:40px;">Type</th>
+        <th style="text-align:center;padding-bottom:3px;border-bottom:1px dashed #000;width:28px;">Qty</th>
+        <th style="text-align:right;padding-bottom:3px;border-bottom:1px dashed #000;width:52px;">Amt</th>
+      </tr>
+    </thead>
+    <tbody>${itemRows}</tbody>
+  </table>
+  <div class="dashed"></div>
+  <table class="totals-table">
+    <tr><td>Sub Total</td><td class="right">${fmt(sale.subtotal)}</td></tr>
+    ${lineDiscounts > 0 ? `<tr><td>Line Discounts</td><td class="right">${fmt(lineDiscounts)}</td></tr>` : ""}
+    ${billDiscount > 0 ? `<tr><td>(-) Bill Discount${billDiscPct > 0 ? ` (${billDiscPct}%)` : ""}</td><td class="right">${fmt(billDiscount)}</td></tr>` : ""}
+    <tr><td>GST (${salesTaxPct}%)</td><td class="right">${fmt(salesTaxAmt)}</td></tr>
+    <tr class="grand-total"><td>TOTAL</td><td class="right">Rs ${fmt(sale.totalAmount)}</td></tr>
+    ${isCredit ? `
+    <tr class="credit-summary">
+      <td style="padding-top:4px;">Received</td>
+      <td class="right" style="padding-top:4px;">Rs ${fmt(received)}</td>
+    </tr>
+    <tr class="credit-summary">
+      <td class="bold">Payable/Dues</td>
+      <td class="right bold">Rs ${fmt(sale.totalAmount - received)}</td>
+    </tr>
+    ` : ''}
+  </table>
+  <div class="dashed"></div>
+  <div class="center" style="font-size:11px;margin-top:4px;">Thank you for your purchase!</div>
+  <script>window.onload=function(){window.print();setTimeout(function(){window.close();},200);};</script>
+</body></html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
   const exportToCSV = () => {
@@ -370,13 +487,25 @@ export default function SalesHistory() {
                     Customer Info
                   </th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount Details
+                    Medicines
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Qty (each)
+                  </th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Qty
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Dues
                   </th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Payment
                   </th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
+                    Sold By
                   </th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
@@ -387,7 +516,7 @@ export default function SalesHistory() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan="6"
+                      colSpan="10"
                       className="px-4 py-3 text-center text-gray-500 text-sm"
                     >
                       Loading sales history...
@@ -396,14 +525,16 @@ export default function SalesHistory() {
                 ) : sales.length === 0 ? (
                   <tr>
                     <td
-                      colSpan="6"
+                      colSpan="10"
                       className="px-4 py-3 text-center text-gray-500 text-sm"
                     >
                       No sales found
                     </td>
                   </tr>
                 ) : (
-                  sales.map((sale) => (
+                  sales.map((sale) => {
+                    const isCredit = sale.paymentMethod === "Credit";
+                    return (
                     <tr key={sale._id} className="hover:bg-gray-50">
                       <td className="px-4 py-2 whitespace-nowrap">
                         <div>
@@ -427,31 +558,52 @@ export default function SalesHistory() {
                           <div className="text-sm text-gray-500">
                             {sale.customerContact}
                           </div>
+                          <div className={`text-[10px] font-bold uppercase tracking-wider ${isCredit ? 'text-red-500' : 'text-slate-400'}`}>
+                            {isCredit ? "Credit Customer" : "Walk-In"}
+                          </div>
                           {sale.petName && (
-                            <div className="text-xs text-blue-600">
+                            <div className="text-xs text-blue-600 mt-1">
                               Pet: {sale.petName}
                             </div>
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-2 whitespace-nowrap">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">
-                            PKR {sale.totalAmount?.toLocaleString()}
-                          </div>
-                          {sale.discount > 0 && (
-                            <div className="text-sm text-red-600">
-                              -PKR {sale.discount?.toLocaleString()}
-                            </div>
-                          )}
-                          <div className="text-xs text-gray-500">
-                            Subtotal: PKR {sale.subtotal?.toLocaleString()}
-                          </div>
+                      {/* Medicines column */}
+                      <td className="px-4 py-2 max-w-[160px]">
+                        <div className="text-xs text-gray-800 leading-relaxed">
+                          {(sale.items || []).map(i => i.medicineName).join(", ")}
                         </div>
+                      </td>
+                      {/* Qty (each) column */}
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <div className="text-xs text-gray-600">
+                          {(sale.items || []).map(i => i.quantity).join(", ")}
+                        </div>
+                      </td>
+                      {/* Total Qty column */}
+                      <td className="px-4 py-2 text-center whitespace-nowrap">
+                        <span className="text-sm font-bold text-gray-800">
+                          {(sale.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <div className="text-sm font-bold text-gray-900">
+                          PKR {Number(sale.totalAmount || 0).toFixed(2)}
+                        </div>
+                      </td>
+                      {/* Dues column */}
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        {isCredit ? (
+                          <div className="text-sm font-black text-red-600">
+                            PKR {Number(sale.customerTotalDue || (sale.totalAmount - (sale.receivedAmount || 0))).toFixed(2)}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap">
                         <div>
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${isCredit ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
                             {sale.paymentMethod}
                           </span>
                           {sale.paymentCharge > 0 && (
@@ -461,27 +613,27 @@ export default function SalesHistory() {
                           )}
                         </div>
                       </td>
+                      {/* Sold By column (replaces Status) */}
                       <td className="px-4 py-2 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            sale.status === "Completed"
-                              ? "bg-green-100 text-green-800"
-                              : sale.status === "Pending"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-red-100 text-red-800"
-                          }`}
-                        >
-                          {sale.status}
+                        <span className="text-xs font-medium text-purple-700 bg-purple-50 px-2 py-1 rounded-full">
+                          {sale.soldBy || loggedInUser}
                         </span>
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
                           <button
                             onClick={() => viewSaleDetails(sale._id)}
                             className="text-blue-600 hover:text-blue-900"
                             title="View Details"
                           >
                             <FiEye size={16} />
+                          </button>
+                          <button
+                            onClick={() => reprintSale(sale)}
+                            className="text-purple-600 hover:text-purple-900"
+                            title="Reprint Invoice"
+                          >
+                            <FiPrinter size={16} />
                           </button>
                           <button
                             onClick={() => deleteSale(sale._id)}
@@ -493,7 +645,8 @@ export default function SalesHistory() {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -619,10 +772,18 @@ export default function SalesHistory() {
                         <span className="font-medium">Contact:</span>{" "}
                         {selectedSale.sale.customerContact || "N/A"}
                       </div>
-                      <div>
-                        <span className="font-medium">Pet:</span>{" "}
-                        {selectedSale.sale.petName || "N/A"}
-                      </div>
+                      {selectedSale.sale.customerAddress && (
+                        <div>
+                          <span className="font-medium">Address:</span>{" "}
+                          {selectedSale.sale.customerAddress}
+                        </div>
+                      )}
+                      {selectedSale.sale.customerCnic && (
+                        <div>
+                          <span className="font-medium">CNIC:</span>{" "}
+                          <span className="font-mono">{selectedSale.sale.customerCnic}</span>
+                        </div>
+                      )}
                       <div>
                         <span className="font-medium">Payment Method:</span>{" "}
                         {selectedSale.sale.paymentMethod}
@@ -639,21 +800,35 @@ export default function SalesHistory() {
                       Amount Breakdown
                     </h4>
                     <div className="space-y-2 text-sm">
-                      <div>
-                        <span className="font-medium">Subtotal:</span> PKR
-                        {selectedSale.sale.subtotal?.toLocaleString()}
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Subtotal:</span>
+                        <span className="font-medium">PKR {Number(selectedSale.sale.subtotal || 0).toFixed(2)}</span>
                       </div>
-                      <div>
-                        <span className="font-medium">Discount:</span> PKR
-                        {selectedSale.sale.discount?.toLocaleString()}
+                      {Number(selectedSale.sale.lineDiscounts) > 0 && (
+                        <div className="flex justify-between text-green-600">
+                          <span>Line Discounts:</span>
+                          <span className="font-medium">-PKR {Number(selectedSale.sale.lineDiscounts).toFixed(2)}</span>
+                        </div>
+                      )}
+                      {Number(selectedSale.sale.billDiscountAmount) > 0 && (
+                        <div className="flex justify-between text-green-600">
+                          <span>Bill Discount{selectedSale.sale.billDiscountPercent > 0 ? ` (${selectedSale.sale.billDiscountPercent}%)` : ''}:</span>
+                          <span className="font-medium">-PKR {Number(selectedSale.sale.billDiscountAmount).toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-gray-600">
+                        <span>GST ({selectedSale.sale.salesTaxPercent || 0}%):</span>
+                        <span className="font-medium">PKR {Number(selectedSale.sale.salesTaxAmount || 0).toFixed(2)}</span>
                       </div>
-                      <div>
-                        <span className="font-medium">Payment Charge:</span> PKR
-                        {selectedSale.sale.paymentCharge?.toLocaleString()}
-                      </div>
-                      <div className="border-t pt-2">
-                        <span className="font-medium">Total Amount:</span> PKR
-                        {selectedSale.sale.totalAmount?.toLocaleString()}
+                      {Number(selectedSale.sale.paymentCharge) > 0 && (
+                        <div className="flex justify-between text-gray-600">
+                          <span>Payment Charge:</span>
+                          <span className="font-medium">PKR {Number(selectedSale.sale.paymentCharge).toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t pt-2 font-bold text-base">
+                        <span>Total Amount:</span>
+                        <span>PKR {Number(selectedSale.sale.totalAmount || 0).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>

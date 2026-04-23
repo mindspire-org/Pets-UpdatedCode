@@ -68,6 +68,9 @@ const pharmacyMedicineSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  invoiceDate: {
+    type: Date
+  },
   barcode: {
     type: String,
     trim: true,
@@ -115,7 +118,18 @@ const pharmacyMedicineSchema = new mongoose.Schema({
   manufacturer: {
     type: String,
     trim: true
-  }
+  },
+  // Invoice item fields
+  genericName: { type: String, trim: true, default: '' },
+  qtyPacks: { type: Number, default: 0 },
+  unitsPerPack: { type: Number, default: 1 },
+  buyPerPack: { type: Number, default: 0 },
+  salePerPack: { type: Number, default: 0 },
+  minStock: { type: Number, default: 0 },
+  defaultDiscount: { type: Number, default: 0 },
+  lineTaxType: { type: String, enum: ['%', 'PKR'], default: '%' },
+  lineTaxValue: { type: Number, default: 0 },
+  companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company' },
 }, {
   timestamps: true
 });

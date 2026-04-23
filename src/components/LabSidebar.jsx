@@ -1,9 +1,11 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { FiGrid, FiFilePlus, FiList, FiActivity, FiPackage, FiSettings, FiLogOut, FiImage, FiClipboard } from 'react-icons/fi'
 
 export default function LabSidebar({ collapsed=false, open=false, onClose=()=>{} }){
   const navigate = useNavigate()
+  const auth = JSON.parse(localStorage.getItem('lab_auth') || '{}')
+
   const linkClass = ({ isActive }) => `flex items-center gap-3 px-3 h-10 rounded-xl transition text-sm font-medium whitespace-nowrap ${isActive ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'}`
   const iconSize = collapsed ? 19 : 18
   const iconClass = collapsed ? 'transition-transform hover:scale-110' : ''
@@ -14,32 +16,42 @@ export default function LabSidebar({ collapsed=false, open=false, onClose=()=>{}
     navigate('/lab/login')
   }
 
+  const menuItems = useMemo(() => {
+    const allItems = [
+      { to: "/lab", icon: FiGrid, label: "Dashboard", end: true, id: 'dashboard' },
+      { to: "/lab/catalog", icon: FiActivity, label: "Test Catalog", id: 'catalog' },
+      { to: "/lab/add-report", icon: FiFilePlus, label: "Test Reports", id: 'add-report' },
+      { to: "/lab/radiology", icon: FiImage, label: "Radiology", id: 'radiology' },
+      { to: "/lab/inventory", icon: FiPackage, label: "Inventory", id: 'inventory' },
+      { to: "/lab/sample-intake", icon: FiClipboard, label: "Sample Intake", id: 'sample-intake' },
+      { to: "/lab/suppliers", icon: FiList, label: "Suppliers", id: 'suppliers' },
+      { to: "/lab/settings", icon: FiSettings, label: "Settings", id: 'settings' },
+    ]
+
+    // If user is admin, show all
+    if (auth.role === 'admin' || auth.role === 'Admin') return allItems;
+
+    // Filter based on permissions
+    const permissions = auth.sidebarPermissions?.lab;
+    if (!permissions) return allItems; // Default to show all if no permissions set
+
+    return allItems.filter(item => permissions.includes(item.id));
+  }, [auth.role, auth.sidebarPermissions]);
+
   const Nav = (
     <nav className="space-y-1">
-      <NavLink to="/lab" end className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiGrid size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Dashboard</span>}
-      </NavLink>
-      <NavLink to="/lab/catalog" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiActivity size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Test Catalog</span>}
-      </NavLink>
-      <NavLink to="/lab/add-report" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiFilePlus size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Test Reports</span>}
-      </NavLink>
-      <NavLink to="/lab/radiology" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiImage size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Radiology</span>}
-      </NavLink>
-      <NavLink to="/lab/inventory" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiPackage size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Inventory</span>}
-      </NavLink>
-      <NavLink to="/lab/sample-intake" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiClipboard size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Sample Intake</span>}
-      </NavLink>
-      <NavLink to="/lab/suppliers" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiList size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Suppliers</span>}
-      </NavLink>
-      <NavLink to="/lab/settings" className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} onClick={onClose}>
-        <FiSettings size={iconSize} className={iconClass} /> {!collapsed && <span className="truncate">Settings</span>}
-      </NavLink>
+      {menuItems.map(item => (
+        <NavLink 
+          key={item.to}
+          to={item.to} 
+          end={item.end}
+          className={({isActive}) => `${linkClass({isActive})} min-w-0 ${collapsed ? 'justify-center px-2' : ''}`} 
+          onClick={onClose}
+        >
+          <item.icon size={iconSize} className={iconClass} /> 
+          {!collapsed && <span className="truncate">{item.label}</span>}
+        </NavLink>
+      ))}
       <button onClick={logout} className={`${collapsed ? 'justify-center px-2' : ''} w-full mt-4 flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-red-50 hover:text-red-600 transition text-sm font-medium`}>
         <FiLogOut size={iconSize} className={iconClass} /> {!collapsed && <span>Logout</span>}
       </button>

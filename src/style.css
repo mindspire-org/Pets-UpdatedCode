@@ -113,3 +113,35 @@
     box-shadow: none !important;
   }
 }
+
+/* Custom Sidebar Scrollbar - Ultra Thin and Hover-Only */
+.custom-sidebar-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;  /* IE/Edge */
+}
+
+.custom-sidebar-scrollbar::-webkit-scrollbar {
+  width: 4px; /* Ultra thin */
+  display: none; /* Hidden by default for Chrome/Safari */
+}
+
+.custom-sidebar-scrollbar:hover {
+  scrollbar-width: thin; /* Firefox hover */
+}
+
+.custom-sidebar-scrollbar:hover::-webkit-scrollbar {
+  display: block; /* Show on hover for Chrome/Safari */
+}
+
+.custom-sidebar-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-sidebar-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #e2e8f0; /* slate-200 */
+  border-radius: 20px;
+}
+
+.custom-sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #cbd5e1; /* slate-300 */
+}

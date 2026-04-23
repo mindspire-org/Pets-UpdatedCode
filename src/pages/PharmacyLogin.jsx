@@ -25,7 +25,8 @@ export default function PharmacyLogin() {
           localStorage.setItem('pharmacy_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role
+            role: user.role,
+            sidebarPermissions: user.sidebarPermissions || {}
           }))
           try { addActivity({ user: 'Pharmacy', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/pharmacy')

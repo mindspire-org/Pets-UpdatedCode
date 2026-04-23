@@ -1,1137 +1,547 @@
 ﻿import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   FiSearch,
-  FiPlus,
-  FiEye,
+  FiFilter,
+  FiDownload,
   FiRefreshCw,
-  FiArrowLeft,
-  FiCheck,
   FiX,
-  FiPackage,
+  FiCornerUpLeft,
   FiPrinter,
+  FiClock,
 } from "react-icons/fi";
-import { pharmacyHistoryAPI } from "../../services/api";
+import { pharmacyHistoryAPI, settingsAPI } from "../../services/api";
+import DateRangePicker from "../../components/DateRangePicker";
 import Modal from "../../components/Modal";
-import SupplierReturnReceipt from "../../components/pharmacy/SupplierReturnReceipt";
 
 export default function SupplierReturns() {
-  const [returns, setReturns] = useState([]);
+  const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [showReturnHistory, setShowReturnHistory] = useState(false);
-  const [purchaseHistory, setPurchaseHistory] = useState([]);
-  const [selectedPurchase, setSelectedPurchase] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loadingPurchases, setLoadingPurchases] = useState(false);
-  const [returnForm, setReturnForm] = useState({
-    supplierName: "",
-    supplierContact: "",
-    refundMethod: "Credit Note",
-    notes: "",
-    items: [],
-    originalPurchaseId: "",
+  const [filters, setFilters] = useState({
+    startDate: "", endDate: "", supplierName: "",
+    invoiceNo: "", purchaseOrderNo: "",
   });
+  const [pagination, setPagination] = useState({ currentPage: 1, totalPages: 1, totalCount: 0 });
+  const [summary, setSummary] = useState({ totalPurchases: 0, totalAmount: 0, totalPaid: 0, outstandingAmount: 0 });
+  const [modal, setModal] = useState({ isOpen: false, type: "info", title: "", message: "", onConfirm: null });
+  const [hospitalSettings, setHospitalSettings] = useState(null);
 
-  const [purchaseFilters, setPurchaseFilters] = useState({
-    startDate: "",
-    endDate: "",
-    supplierName: "",
-    invoiceNumber: "",
-  });
+  // Return dialog state
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnPurchase, setReturnPurchase] = useState(null);
+  const [returnItems, setReturnItems] = useState([]);
+  const [returnReason, setReturnReason] = useState("");
+  const [refundMethod, setRefundMethod] = useState("Cash");
+  const [returnLoading, setReturnLoading] = useState(false);
+  const [returnToast, setReturnToast] = useState("");
 
-  const [returnFilters, setReturnFilters] = useState({
-    startDate: "",
-    endDate: "",
-    supplierName: "",
-    returnNumber: "",
-    status: "",
-  });
+  // Return slip state
+  const [showSlip, setShowSlip] = useState(false);
+  const [slipData, setSlipData] = useState(null);
 
-  const [showReceipt, setShowReceipt] = useState(false);
-  const [receiptData, setReceiptData] = useState(null);
-  const [hospitalSettings, setHospitalSettings] = useState({
-    hospitalName: "Pet Hospital & Pharmacy",
-    address: "123 Main Street, City",
-    phone: "+92-XXX-XXXXXXX",
-  });
-
-  // Modal states
-  const [modal, setModal] = useState({
-    isOpen: false,
-    type: "info",
-    title: "",
-    message: "",
-    onConfirm: null,
-  });
+  const navigate = useNavigate();
 
   useEffect(() => {
-    fetchReturns();
+    settingsAPI.get(JSON.parse(localStorage.getItem("user") || "{}").username || "admin")
+      .then(r => setHospitalSettings(r.data)).catch(() => {});
   }, []);
 
-  const fetchReturns = async () => {
+  useEffect(() => {
+    fetchPurchases();
+  }, [pagination.currentPage]);
+
+  const fetchPurchases = async () => {
     try {
       setLoading(true);
-      const params = {
-        returnType: "Supplier Return",
-      };
-
-      if (returnFilters.startDate) params.startDate = returnFilters.startDate;
-      if (returnFilters.endDate) params.endDate = returnFilters.endDate;
-      if (returnFilters.supplierName)
-        params.supplierName = returnFilters.supplierName;
-      if (returnFilters.returnNumber)
-        params.returnNumber = returnFilters.returnNumber;
-      if (returnFilters.status) params.status = returnFilters.status;
-
-      const response = await pharmacyHistoryAPI.getReturns(params);
-      setReturns(response.data.returns);
-    } catch (error) {
-      console.error("Error fetching returns:", error);
+      const params = { ...filters, page: pagination.currentPage, limit: 20 };
+      Object.keys(params).forEach(k => { if (!params[k]) delete params[k]; });
+      const res = await pharmacyHistoryAPI.getPurchaseHistory(params);
+      setPurchases(res.data.purchases || []);
+      setPagination(res.data.pagination || { currentPage: 1, totalPages: 1, totalCount: 0 });
+      setSummary(res.data.summary || { totalPurchases: 0, totalAmount: 0, totalPaid: 0, outstandingAmount: 0 });
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
   };
 
-  const applyReturnFilters = () => {
-    fetchReturns();
+  const handleFilterChange = (field, value) => setFilters(p => ({ ...p, [field]: value }));
+  const handleDateRangeChange = (dr) => setFilters(p => ({ ...p, startDate: dr.fromDate, endDate: dr.toDate }));
+  const applyFilters = () => { setPagination(p => ({ ...p, currentPage: 1 })); setTimeout(fetchPurchases, 0); };
+  const clearFilters = () => {
+    setFilters({ startDate: "", endDate: "", supplierName: "", invoiceNo: "", purchaseOrderNo: "" });
+    setPagination(p => ({ ...p, currentPage: 1 }));
+    setTimeout(fetchPurchases, 0);
   };
 
-  const clearReturnFilters = () => {
-    setReturnFilters({
-      startDate: "",
-      endDate: "",
-      supplierName: "",
-      returnNumber: "",
-      status: "",
-    });
-    setTimeout(() => {
-      fetchReturns();
-    }, 0);
+  const showToast = (msg) => { setReturnToast(msg); setTimeout(() => setReturnToast(""), 3500); };
+
+  const openReturn = (purchase) => {
+    setReturnPurchase(purchase);
+    setReturnItems((purchase.items || []).map(item => ({
+      medicineId: item.medicineId,
+      medicineName: item.medicineName,
+      batchNo: item.batchNo || "N/A",
+      currentStock: item.currentStock || 0,
+      originalQty: Number(item.totalItems ?? item.quantity ?? 0),
+      returnQty: 0,
+      purchasePrice: Number(item.buyPerUnit ?? item.purchasePrice ?? 0),
+      unit: item.unit || "pieces",
+      category: item.category || item.mainCategory || "Medicine",
+    })));
+    setReturnReason("");
+    setRefundMethod("Cash");
+    setShowReturnModal(true);
   };
 
-  const applyPurchaseFilters = () => {
-    searchPurchases();
+  const updateReturnQty = (idx, val) => {
+    const qty = Math.max(0, Math.min(Number(val) || 0, returnItems[idx].originalQty));
+    setReturnItems(prev => prev.map((it, i) => i === idx ? { ...it, returnQty: qty } : it));
   };
 
-  const clearPurchaseFilters = () => {
-    setPurchaseFilters({
-      startDate: "",
-      endDate: "",
-      supplierName: "",
-      invoiceNumber: "",
-    });
-    setPurchaseHistory([]);
-  };
+  const returnTotal = returnItems.reduce((s, it) => s + (it.purchasePrice * it.returnQty), 0);
 
-  const searchPurchases = async () => {
+  const handleSubmitReturn = async () => {
+    const itemsToReturn = returnItems.filter(it => it.returnQty > 0);
+    if (itemsToReturn.length === 0) return showToast("Select at least one item to return");
     try {
-      setLoadingPurchases(true);
-      const params = {};
-
-      if (purchaseFilters.startDate)
-        params.startDate = purchaseFilters.startDate;
-      if (purchaseFilters.endDate) params.endDate = purchaseFilters.endDate;
-      if (purchaseFilters.supplierName)
-        params.supplierName = purchaseFilters.supplierName;
-      if (purchaseFilters.invoiceNumber)
-        params.invoiceNumber = purchaseFilters.invoiceNumber;
-
-      // If no filters and no search query, show message
-      if (
-        !searchQuery.trim() &&
-        !purchaseFilters.startDate &&
-        !purchaseFilters.endDate &&
-        !purchaseFilters.supplierName &&
-        !purchaseFilters.invoiceNumber
-      ) {
-        setModal({
-          isOpen: true,
-          type: "error",
-          title: "Search Required",
-          message: "Please enter search criteria or use filters",
-          onConfirm: null,
-        });
-        return;
-      }
-
-      const response = await pharmacyHistoryAPI.getPurchaseHistory(params);
-      let filteredPurchases = response.data.purchases;
-
-      // Apply text search if query exists
-      if (searchQuery.trim()) {
-        filteredPurchases = filteredPurchases.filter(
-          (purchase) =>
-            purchase.supplierName
-              .toLowerCase()
-              .includes(searchQuery.toLowerCase()) ||
-            purchase.invoiceNo
-              .toLowerCase()
-              .includes(searchQuery.toLowerCase()) ||
-            purchase.purchaseOrderNo
-              .toLowerCase()
-              .includes(searchQuery.toLowerCase()),
-        );
-      }
-
-      setPurchaseHistory(filteredPurchases);
-    } catch (error) {
-      console.error("Error searching purchases:", error);
-      setModal({
-        isOpen: true,
-        type: "error",
-        title: "Search Error",
-        message: "Error searching purchases: " + error.message,
-        onConfirm: null,
-      });
-    } finally {
-      setLoadingPurchases(false);
-    }
-  };
-
-  const selectPurchase = async (purchase) => {
-    try {
-      // Fetch detailed purchase information
-      const response = await pharmacyHistoryAPI.getPurchaseDetails(
-        purchase._id,
-      );
-      const detailedPurchase = response.data.purchase;
-
-      setSelectedPurchase(detailedPurchase);
-      setReturnForm((prev) => ({
-        ...prev,
-        originalPurchaseId: detailedPurchase._id,
-        supplierName: detailedPurchase.supplierName,
-        supplierContact: detailedPurchase.supplierContact || "",
-        items: detailedPurchase.items.map((item) => ({
-          medicineId: item.medicineId || null,
-          medicineName: item.medicineName,
-          batchNo: item.batchNo,
-          category: item.category,
-          unit: item.unit,
-          purchasedQuantity: item.quantity,
-          purchasePrice: item.purchasePrice,
-          returnQuantity: 0,
-          returnPrice: item.purchasePrice,
-          totalReturnAmount: 0,
-          reason: "",
-          expiryDate: item.expiryDate,
+      setReturnLoading(true);
+      const res = await pharmacyHistoryAPI.createSupplierReturn({
+        originalPurchaseId: returnPurchase._id,
+        purchaseOrderNo: returnPurchase.purchaseOrderNo,
+        invoiceNo: returnPurchase.invoiceNo, // Send real invoice number
+        supplierName: returnPurchase.supplierName,
+        supplierContact: returnPurchase.supplierContact || "",
+        refundMethod: refundMethod,
+        notes: returnReason,
+        items: itemsToReturn.map(it => ({
+          medicineId: String(it.medicineId),
+          medicineName: it.medicineName,
+          batchNo: it.batchNo || "N/A",
+          category: it.category || "Medicine",
+          quantity: Number(it.returnQty),
+          unit: it.unit || "Unit",
+          returnPrice: Number(it.purchasePrice),
+          totalReturnAmount: Number(it.purchasePrice * it.returnQty),
+          reason: returnReason || "Supplier return",
         })),
-      }));
-      setPurchaseHistory([]);
-      setSearchQuery("");
-    } catch (error) {
-      console.error("Error fetching purchase details:", error);
-      setModal({
-        isOpen: true,
-        type: "error",
-        title: "Error",
-        message: "Error loading purchase details: " + error.message,
-        onConfirm: null,
+        totalReturnAmount: Number(returnTotal),
+        processedBy: JSON.parse(localStorage.getItem("user") || "{}").name || "Admin",
       });
-    }
-  };
 
-  const updateReturnItem = (index, field, value) => {
-    const updatedItems = [...returnForm.items];
-    updatedItems[index][field] = value;
-
-    if (field === "returnQuantity" || field === "returnPrice") {
-      updatedItems[index].totalReturnAmount =
-        (updatedItems[index].returnQuantity || 0) *
-        (updatedItems[index].returnPrice || 0);
-    }
-
-    setReturnForm((prev) => ({ ...prev, items: updatedItems }));
-  };
-
-  const submitReturn = async () => {
-    const returnItems = returnForm.items.filter(
-      (item) => item.returnQuantity > 0,
-    );
-
-    if (returnItems.length === 0) {
-      setModal({
-        isOpen: true,
-        type: "error",
-        title: "No Items Selected",
-        message: "Please add at least one item to return",
-        onConfirm: null,
+      setSlipData({
+        returnNumber: res?.data?.returnNumber || "RTN-SUP-" + Date.now(),
+        date: new Date().toLocaleString(),
+        supplierName: returnPurchase.supplierName,
+        invoiceNumber: returnPurchase.invoiceNo,
+        refundMethod: refundMethod,
+        items: itemsToReturn.map(it => ({
+          medicineName: it.medicineName,
+          returnQty: it.returnQty,
+          returnAmt: it.purchasePrice * it.returnQty,
+        })),
+        totalReturnAmount: returnTotal,
       });
-      return;
-    }
-
-    if (!returnForm.supplierName.trim()) {
-      setModal({
-        isOpen: true,
-        type: "error",
-        title: "Supplier Required",
-        message: "Please enter supplier name",
-        onConfirm: null,
-      });
-      return;
-    }
-
-    // Show confirmation modal
-    setModal({
-      isOpen: true,
-      type: "confirm",
-      title: "Confirm Return",
-      message: `Are you sure you want to process this return?\n\nSupplier: ${returnForm.supplierName}\nItems: ${returnItems.length}\nTotal Amount: PKR ${returnItems.reduce((sum, item) => sum + item.totalReturnAmount, 0).toFixed(2)}\n\nStock will be adjusted automatically.`,
-      showCancel: true,
-      onConfirm: async () => {
-        try {
-          const returnData = {
-            supplierName: returnForm.supplierName,
-            supplierContact: returnForm.supplierContact,
-            refundMethod: returnForm.refundMethod,
-            notes: returnForm.notes,
-            items: returnItems,
-            originalPurchaseId: returnForm.originalPurchaseId || undefined,
-            originalPurchaseOrderNo:
-              selectedPurchase?.purchaseOrderNo || undefined,
-            processedBy:
-              JSON.parse(localStorage.getItem("user") || "{}").username ||
-              "System",
-          };
-
-          await pharmacyHistoryAPI.createSupplierReturn(returnData);
-
-          // Get the created return for receipt
-          const createdReturn = {
-            ...returnData,
-            returnNumber: `SR-${Date.now()}`, // This should come from server response
-            returnDate: new Date(),
-            totalReturnAmount: returnItems.reduce(
-              (sum, item) => sum + item.totalReturnAmount,
-              0,
-            ),
-            refundStatus: "Processed",
-            items: returnItems,
-          };
-
-          setModal({
-            isOpen: true,
-            type: "success",
-            title: "Return Processed",
-            message:
-              "Supplier return created successfully. Stock has been adjusted. Would you like to print the receipt?",
-            onConfirm: () => {
-              setReceiptData(createdReturn);
-              setShowReceipt(true);
-            },
-          });
-          setShowCreateForm(false);
-          setSelectedPurchase(null);
-          setReturnForm({
-            supplierName: "",
-            supplierContact: "",
-            refundMethod: "Credit Note",
-            notes: "",
-            items: [],
-            originalPurchaseId: "",
-          });
-          fetchReturns();
-        } catch (error) {
-          console.error("Error creating return:", error);
-          setModal({
-            isOpen: true,
-            type: "error",
-            title: "Return Error",
-            message: "Error creating return: " + error.message,
-            onConfirm: null,
-          });
-        }
-      },
-    });
-  };
-
-  const updateReturnStatus = async (returnId, status, approvedBy = "") => {
-    try {
-      await pharmacyHistoryAPI.updateReturnStatus(returnId, {
-        refundStatus: status,
-        approvedBy,
-        notes: `Status updated to ${status}`,
-      });
-      fetchReturns();
-    } catch (error) {
-      console.error("Error updating return status:", error);
+      setShowReturnModal(false);
+      setShowSlip(true);
+      fetchPurchases();
+    } catch (err) {
+      showToast(err.message || "Error processing supplier return");
+    } finally {
+      setReturnLoading(false);
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case "Processed":
-        return "bg-green-100 text-green-800";
-      case "Pending":
-        return "bg-yellow-100 text-yellow-800";
-      case "Rejected":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
+  const printReturnSlip = (slip) => {
+    const w = window.open("", "_blank", "width=400,height=600,left=100,top=50,toolbar=0,menubar=0,scrollbars=1");
+    const fmt = (n) => Number(n || 0).toFixed(2);
+    const shopName = hospitalSettings?.companyName || "PHARMACY";
+    const itemRows = (slip.items || []).map(it => `
+      <tr>
+        <td style="padding:4px 0;">${it.medicineName}</td>
+        <td style="text-align:center;padding:4px 8px;">${it.returnQty}</td>
+        <td style="text-align:right;padding:4px 0;">${fmt(it.returnAmt)}</td>
+      </tr>`).join("");
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Supplier Return Slip</title>
+<style>
+  @page{size:80mm auto;margin:4mm;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Courier New',Courier,monospace;font-size:12px;color:#000;width:72mm;}
+  .center{text-align:center;}.right{text-align:right;}.bold{font-weight:bold;}
+  .dashed{border-top:1px dashed #000;margin:6px 0;}
+  table{width:100%;border-collapse:collapse;}
+  td,th{font-size:12px;}
+  .total-row td{font-weight:bold;font-size:13px;border-top:1px dashed #000;padding-top:4px;}
+</style></head><body>
+  <div class="center bold" style="font-size:15px;">${shopName.toUpperCase()}</div>
+  <div class="dashed"></div>
+  <div class="center bold" style="font-size:13px;">Supplier Return</div>
+  <div class="dashed"></div>
+  <div style="font-size:11px;line-height:1.6;">
+    <div>Date : ${slip.date}</div>
+    <div>Supplier : ${slip.supplierName}</div>
+    <div>Purchase Bill : ${slip.invoiceNumber}</div>
+    ${slip.refundMethod ? `<div>Refund : ${slip.refundMethod}</div>` : ""}
+  </div>
+  <div class="dashed"></div>
+  <table>
+    <thead>
+      <tr>
+        <th style="text-align:left;padding-bottom:3px;border-bottom:1px dashed #000;">Item</th>
+        <th style="text-align:center;padding-bottom:3px;border-bottom:1px dashed #000;width:30px;">Qty</th>
+        <th style="text-align:right;padding-bottom:3px;border-bottom:1px dashed #000;width:55px;">Amt</th>
+      </tr>
+    </thead>
+    <tbody>${itemRows}</tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td colspan="2">TOTAL RETURN</td>
+        <td class="right">Rs ${fmt(slip.totalReturnAmount)}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <div class="dashed"></div>
+  <div class="center" style="font-size:11px;margin-top:4px;">Supplier Return Copy</div>
+  <script>window.onload=function(){window.print();setTimeout(function(){window.close();},200);};</script>
+</body></html>`;
+    w.document.write(html);
+    w.document.close();
   };
 
-  if (showCreateForm) {
-    return (
-      <div className="p-6 bg-gray-50 min-h-screen">
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center gap-4 mb-6">
-              <button
-                onClick={() => {
-                  setShowCreateForm(false);
-                  setSelectedPurchase(null);
-                  setPurchaseHistory([]);
-                }}
-                className="flex items-center gap-2 text-gray-600 hover:text-gray-800"
-              >
-                <FiArrowLeft size={20} />
-                Back to Returns
+  return (
+    <div className="p-3 bg-gray-50 min-h-screen">
+      {returnToast && (
+        <div className="fixed top-6 right-6 z-[9999] bg-gradient-to-r from-purple-600 to-blue-600 text-white px-6 py-3 rounded-xl shadow-2xl font-semibold text-sm">
+          {returnToast}
+        </div>
+      )}
+
+      <div className="max-w-full mx-auto">
+        <div className="bg-white rounded-lg shadow-sm p-4 mb-3">
+          <div className="flex justify-between items-center mb-3">
+            <h1 className="text-xl font-bold text-gray-900">Supplier Returns</h1>
+            <div className="flex gap-2">
+              <button onClick={() => navigate("/pharmacy/return-history")}
+                className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm">
+                <FiClock size={14} /> Return History
               </button>
-              <h1 className="text-2xl font-bold text-gray-900">
-                Create Supplier Return
-              </h1>
+              <button onClick={fetchPurchases} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+                <FiRefreshCw size={14} /> Refresh
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+            {[
+              { label: "Total Purchases", value: summary.totalPurchases, color: "blue" },
+              { label: "Total Spent", value: `PKR ${summary.totalAmount?.toLocaleString()}`, color: "green" },
+              { label: "Total Paid", value: `PKR ${summary.totalPaid?.toLocaleString()}`, color: "purple" },
+              { label: "Outstanding", value: `PKR ${summary.outstandingAmount?.toLocaleString()}`, color: "red" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className={`bg-${color}-50 p-3 rounded`}>
+                <div className={`text-xs text-${color}-600 font-medium`}>{label}</div>
+                <div className={`text-xl font-bold text-${color}-900`}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t pt-3">
+            <div className="flex items-center gap-2 mb-3">
+              <FiFilter size={16} className="text-gray-600" />
+              <span className="text-sm font-medium text-gray-700">Filter Purchases</span>
+            </div>
+            <div className="mb-3">
+              <DateRangePicker fromDate={filters.startDate} toDate={filters.endDate} onDateRangeChange={handleDateRangeChange} />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+              {[
+                { ph: "Supplier Name", field: "supplierName" },
+                { ph: "Invoice Number", field: "invoiceNo" },
+                { ph: "PO Number", field: "purchaseOrderNo" },
+              ].map(({ ph, field }) => (
+                <input key={field} type="text" placeholder={ph} value={filters[field]}
+                  onChange={e => handleFilterChange(field, e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={applyFilters} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium">Apply Filters</button>
+              <button onClick={clearFilters} className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm font-medium">Clear All</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  {[
+                    { label: "Invoice", tooltip: null },
+                    { label: "Supplier", tooltip: null },
+                    { label: "Medicines", tooltip: null },
+                    { label: "Stock", tooltip: null },
+                    { label: "Total / Remaining", tooltip: "Original amount / After returns" },
+                    { label: "Actions", tooltip: null }
+                  ].map(({ label, tooltip }) => (
+                    <th key={label} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" title={tooltip}>
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {loading ? (
+                  <tr><td colSpan="6" className="px-4 py-3 text-center text-gray-500 text-sm">Loading purchases...</td></tr>
+                ) : purchases.length === 0 ? (
+                  <tr><td colSpan="6" className="px-4 py-3 text-center text-gray-500 text-sm">No purchases found</td></tr>
+                ) : (
+                  purchases.map(purchase => (
+                    <tr key={purchase._id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{purchase.invoiceNo}</div>
+                        <div className="text-xs text-gray-500">{new Date(purchase.purchaseDate).toLocaleDateString()}</div>
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{purchase.supplierName}</div>
+                        <div className="text-xs text-gray-500">{purchase.supplierContact}</div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="text-xs text-gray-800 leading-relaxed">{(purchase.items || []).map(i => i.medicineName).join(", ")}</div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="text-xs font-bold text-blue-600 leading-relaxed">
+                          {(purchase.items || []).map(i => {
+                            // Use currentStock if available and > 0, otherwise fallback to purchase quantity
+                            const stock = i.currentStock || i.totalItems || i.quantity || 0;
+                            return `${stock}`;
+                          }).join(", ")}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <div className="text-sm font-bold text-gray-900">
+                          {purchase.totalReturnedAmount > 0 ? (
+                            <>
+                              <span className="line-through text-gray-400 text-xs">PKR {Number(purchase.netTotal ?? purchase.totalAmount ?? 0).toFixed(2)}</span>
+                              <br />
+                              <span className="text-green-600">PKR {Number(purchase.remainingAmount ?? 0).toFixed(2)}</span>
+                            </>
+                          ) : (
+                            <span>PKR {Number(purchase.netTotal ?? purchase.totalAmount ?? 0).toFixed(2)}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <button onClick={() => openReturn(purchase)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white rounded-lg text-xs font-semibold transition-all shadow active:scale-95">
+                          <FiCornerUpLeft size={13} /> Return Items
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {pagination.totalPages > 1 && (
+            <div className="bg-white px-4 py-2 flex items-center justify-between border-t border-gray-200">
+              <p className="text-xs text-gray-700">
+                Page <span className="font-medium">{pagination.currentPage}</span> of <span className="font-medium">{pagination.totalPages}</span> ({pagination.totalCount} total)
+              </p>
+              <nav className="inline-flex rounded shadow-sm -space-x-px">
+                <button onClick={() => setPagination(p => ({ ...p, currentPage: p.currentPage - 1 }))} disabled={!pagination.hasPrev}
+                  className="px-2 py-1 rounded-l border border-gray-300 bg-white text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">Previous</button>
+                <button onClick={() => setPagination(p => ({ ...p, currentPage: p.currentPage + 1 }))} disabled={!pagination.hasNext}
+                  className="px-2 py-1 rounded-r border border-gray-300 bg-white text-xs text-gray-500 hover:bg-gray-50 disabled:opacity-50">Next</button>
+              </nav>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showReturnModal && returnPurchase && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-gradient-to-r from-orange-500 to-red-500 px-6 py-4 flex items-center justify-between shrink-0">
+              <div className="text-white">
+                <h3 className="text-lg font-bold flex items-center gap-2">
+                  <FiCornerUpLeft className="w-5 h-5" /> Supplier Return
+                </h3>
+                <p className="text-xs text-orange-100 mt-0.5">
+                  {returnPurchase.invoiceNo} · {returnPurchase.supplierName}
+                </p>
+              </div>
+              <button onClick={() => setShowReturnModal(false)} className="text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
+                <FiX className="w-5 h-5" />
+              </button>
             </div>
 
-            {!selectedPurchase ? (
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="bg-slate-50 rounded-lg px-3 py-2">
+                  <p className="text-xs text-slate-500">Invoice</p>
+                  <p className="font-bold text-slate-800 font-mono">{returnPurchase.invoiceNo}</p>
+                </div>
+                <div className="bg-slate-50 rounded-lg px-3 py-2">
+                  <p className="text-xs text-slate-500">Purchase Total</p>
+                  <p className="font-bold text-slate-800">PKR {Number(returnPurchase.netTotal ?? returnPurchase.totalAmount ?? 0).toFixed(2)}</p>
+                </div>
+              </div>
+
               <div>
-                <h3 className="text-lg font-semibold mb-4">
-                  Search Purchase History
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  Use filters or search to find the original purchase
-                </p>
-
-                {/* Purchase Filters */}
-                <div className="bg-gray-50 p-4 rounded-lg mb-4">
-                  <h4 className="font-semibold mb-3 text-sm">
-                    Filter Purchases
-                  </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-                    <input
-                      type="date"
-                      placeholder="Start Date"
-                      value={purchaseFilters.startDate}
-                      onChange={(e) =>
-                        setPurchaseFilters({
-                          ...purchaseFilters,
-                          startDate: e.target.value,
-                        })
-                      }
-                      className="px-3 py-2 border border-gray-300 rounded text-sm"
-                    />
-                    <input
-                      type="date"
-                      placeholder="End Date"
-                      value={purchaseFilters.endDate}
-                      onChange={(e) =>
-                        setPurchaseFilters({
-                          ...purchaseFilters,
-                          endDate: e.target.value,
-                        })
-                      }
-                      className="px-3 py-2 border border-gray-300 rounded text-sm"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Supplier Name"
-                      value={purchaseFilters.supplierName}
-                      onChange={(e) =>
-                        setPurchaseFilters({
-                          ...purchaseFilters,
-                          supplierName: e.target.value,
-                        })
-                      }
-                      className="px-3 py-2 border border-gray-300 rounded text-sm"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Invoice Number"
-                      value={purchaseFilters.invoiceNumber}
-                      onChange={(e) =>
-                        setPurchaseFilters({
-                          ...purchaseFilters,
-                          invoiceNumber: e.target.value,
-                        })
-                      }
-                      className="px-3 py-2 border border-gray-300 rounded text-sm"
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={applyPurchaseFilters}
-                      disabled={loadingPurchases}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm"
-                    >
-                      Apply Filters
-                    </button>
-                    <button
-                      onClick={clearPurchaseFilters}
-                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-
-                {/* Text Search */}
-                <div className="flex gap-4 mb-4">
-                  <input
-                    type="text"
-                    placeholder="Or search by supplier name, invoice no, or PO number"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && searchPurchases()}
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button
-                    onClick={searchPurchases}
-                    disabled={loadingPurchases}
-                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
-                  >
-                    <FiSearch size={16} />
-                    {loadingPurchases ? "Searching..." : "Search"}
-                  </button>
-                </div>
-
-                {purchaseHistory.length > 0 && (
-                  <div className="overflow-x-auto">
-                    <h4 className="font-semibold mb-3">
-                      Purchase History - Select a purchase to create return
-                    </h4>
-                    <table className="min-w-full divide-y divide-gray-200 border">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            PO Number
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Date
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Supplier
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Invoice No
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Items
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Amount
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Action
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200 bg-white">
-                        {purchaseHistory.map((purchase) => (
-                          <tr key={purchase._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                              {purchase.purchaseOrderNo}
+                <p className="text-sm font-semibold text-slate-700 mb-2">Select items to return</p>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr>
+                        {["Medicine", "Batch", "Current Stock", "Buy Price", "Return Qty", "Return Amt"].map(h => (
+                          <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {returnItems.map((item, idx) => {
+                        const returnAmt = item.purchasePrice * item.returnQty;
+                        return (
+                          <tr key={idx} className={item.returnQty > 0 ? "bg-orange-50" : "hover:bg-slate-50"}>
+                            <td className="px-3 py-2.5 font-medium text-slate-800">{item.medicineName}</td>
+                            <td className="px-3 py-2.5 text-xs font-mono text-slate-500">{item.batchNo || "—"}</td>
+                            <td className="px-3 py-2.5 text-center font-medium text-blue-600 font-bold">{item.currentStock}</td>
+                            <td className="px-3 py-2.5 text-slate-700">PKR {item.purchasePrice.toFixed(2)}</td>
+                            <td className="px-3 py-2.5">
+                              <input type="number" min="0" max={item.originalQty} value={item.returnQty === 0 ? "" : item.returnQty}
+                                placeholder="0" onChange={e => updateReturnQty(idx, e.target.value)}
+                                className="w-20 px-2 py-1.5 border-2 border-orange-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono" />
                             </td>
-                            <td className="px-6 py-4 text-sm text-gray-500">
-                              {new Date(
-                                purchase.purchaseDate,
-                              ).toLocaleDateString()}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-900">
-                              <div>{purchase.supplierName}</div>
-                              {purchase.supplierContact && (
-                                <div className="text-xs text-gray-500">
-                                  {purchase.supplierContact}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-500">
-                              {purchase.invoiceNo}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-500">
-                              {purchase.items?.length || 0} items
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-900">
-                              PKR {purchase.totalAmount?.toLocaleString()}
-                            </td>
-                            <td className="px-6 py-4">
-                              <button
-                                onClick={() => selectPurchase(purchase)}
-                                className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
-                              >
-                                Select
-                              </button>
+                            <td className={`px-3 py-2.5 font-bold ${returnAmt > 0 ? "text-orange-600" : "text-slate-400"}`}>
+                              {returnAmt > 0 ? `PKR ${returnAmt.toFixed(2)}` : "—"}
                             </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        );
+                      })}
+                    </tbody>
+                    {returnTotal > 0 && (
+                      <tfoot className="bg-orange-50 border-t-2 border-orange-200">
+                        <tr>
+                          <td colSpan={5} className="px-3 py-2.5 text-right font-bold text-slate-700">Total Return:</td>
+                          <td className="px-3 py-2.5 font-black text-orange-600 text-base">PKR {returnTotal.toFixed(2)}</td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Refund Method</label>
+                <div className="flex gap-2">
+                  {["Cash", "Bank Transfer", "Credit Note"].map(m => (
+                    <button key={m} type="button" onClick={() => setRefundMethod(m)}
+                      className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                        refundMethod === m ? "bg-orange-500 border-orange-500 text-white" : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                      }`}>{m}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Reason for Return</label>
+                <textarea rows={2} placeholder="Enter reason (optional)" value={returnReason}
+                  onChange={e => setReturnReason(e.target.value)}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm resize-none" />
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setShowReturnModal(false)}
+                  className="flex-1 px-4 py-3 border-2 border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
+                <button type="button" onClick={handleSubmitReturn} disabled={returnLoading || returnTotal <= 0}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 disabled:opacity-60 text-white rounded-lg font-bold shadow-lg transition-all active:scale-95">
+                  {returnLoading ? "Processing..." : `Process Return · PKR ${returnTotal.toFixed(2)}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSlip && slipData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
+              <h3 className="font-bold text-slate-800 text-lg">Return Slip · {slipData.invoiceNumber}</h3>
+              <div className="flex gap-3">
+                <button onClick={() => printReturnSlip(slipData)}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-semibold transition-all shadow-md active:scale-95">
+                  <FiPrinter className="w-4 h-4" /> Print (Ctrl+P)
+                </button>
+                <button onClick={() => setShowSlip(false)}
+                  className="px-4 py-2 border-2 border-slate-300 text-slate-700 rounded-lg hover:bg-slate-100 text-sm font-semibold transition-all">
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="p-8 font-mono text-sm max-h-[70vh] overflow-y-auto">
+              <div className="text-center font-bold text-2xl mb-2 text-slate-900">PHARMACY</div>
+              <div className="border-t border-dashed border-slate-400 my-4" />
+              <div className="text-center font-bold text-lg mb-4 text-slate-800">Supplier Return</div>
+              <div className="space-y-1.5 text-slate-700 mb-6">
+                <div className="flex justify-between">
+                  <span>Date :</span>
+                  <span>{slipData.date}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Party :</span>
+                  <span className="font-bold">{slipData.supplierName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Bill No :</span>
+                  <span className="font-bold">{slipData.invoiceNumber}</span>
+                </div>
+                {slipData.refundMethod && (
+                  <div className="flex justify-between">
+                    <span>Refund :</span>
+                    <span>{slipData.refundMethod}</span>
                   </div>
                 )}
               </div>
-            ) : (
-              <div>
-                <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded mb-4">
-                  <h3 className="font-semibold text-blue-900">
-                    {selectedPurchase.purchaseOrderNo} ·{" "}
-                    {selectedPurchase.supplierName} · PKR{" "}
-                    {selectedPurchase.totalAmount?.toLocaleString()} ·{" "}
-                    {new Date(
-                      selectedPurchase.purchaseDate,
-                    ).toLocaleDateString()}
-                  </h3>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Supplier Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={returnForm.supplierName}
-                      onChange={(e) =>
-                        setReturnForm((prev) => ({
-                          ...prev,
-                          supplierName: e.target.value,
-                        }))
-                      }
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Supplier Contact
-                    </label>
-                    <input
-                      type="text"
-                      value={returnForm.supplierContact}
-                      onChange={(e) =>
-                        setReturnForm((prev) => ({
-                          ...prev,
-                          supplierContact: e.target.value,
-                        }))
-                      }
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Refund Method
-                  </label>
-                  <select
-                    value={returnForm.refundMethod}
-                    onChange={(e) =>
-                      setReturnForm((prev) => ({
-                        ...prev,
-                        refundMethod: e.target.value,
-                      }))
-                    }
-                    className="w-full md:w-1/2 px-2 py-1.5 border border-gray-300 rounded text-sm"
-                  >
-                    <option value="Credit Note">Credit Note</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="Cash">Cash</option>
-                    <option value="Store Credit">Store Credit</option>
-                  </select>
-                </div>
-
-                <div className="mb-4">
-                  <h3 className="text-base font-semibold mb-2 flex items-center gap-2">
-                    <FiPackage className="text-blue-600" />
-                    Items to Return
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200 border">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Medicine
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Purchased / Price
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Return Qty
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Return Price
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Total
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                            Reason
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200 bg-white">
-                        {returnForm.items.map((item, index) => (
-                          <tr
-                            key={index}
-                            className={
-                              item.returnQuantity > 0 ? "bg-yellow-50" : ""
-                            }
-                          >
-                            <td className="px-4 py-3 text-sm">
-                              <div className="font-medium text-gray-900">
-                                {item.medicineName}
-                              </div>
-                              <div className="text-xs text-gray-400">
-                                {item.batchNo} · {item.category}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-sm">
-                              <div className="text-gray-900">
-                                {item.purchasedQuantity} {item.unit}
-                              </div>
-                              <div className="text-green-700 font-medium">
-                                PKR {item.purchasePrice?.toLocaleString()}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <input
-                                type="number"
-                                min="0"
-                                max={item.purchasedQuantity}
-                                value={item.returnQuantity}
-                                onChange={(e) =>
-                                  updateReturnItem(
-                                    index,
-                                    "returnQuantity",
-                                    parseFloat(e.target.value) || 0,
-                                  )
-                                }
-                                className="w-24 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500"
-                                placeholder="0"
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={item.returnPrice}
-                                onChange={(e) =>
-                                  updateReturnItem(
-                                    index,
-                                    "returnPrice",
-                                    parseFloat(e.target.value) || 0,
-                                  )
-                                }
-                                className="w-28 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500"
-                              />
-                            </td>
-                            <td className="px-4 py-3 text-sm">
-                              <div className="font-bold text-blue-700">
-                                PKR {item.totalReturnAmount?.toFixed(2)}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <select
-                                value={item.reason}
-                                onChange={(e) =>
-                                  updateReturnItem(
-                                    index,
-                                    "reason",
-                                    e.target.value,
-                                  )
-                                }
-                                className="w-36 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500"
-                                disabled={item.returnQuantity === 0}
-                              >
-                                <option value="">Select reason</option>
-                                <option value="Defective">Defective</option>
-                                <option value="Expired">Expired</option>
-                                <option value="Damaged">Damaged</option>
-                                <option value="Wrong Item">Wrong Item</option>
-                                <option value="Excess Stock">
-                                  Excess Stock
-                                </option>
-                                <option value="Other">Other</option>
-                              </select>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot className="bg-gray-100">
-                        <tr>
-                          <td
-                            colSpan="5"
-                            className="px-4 py-3 text-right text-sm font-bold text-gray-900"
-                          >
-                            Total Return Amount:
-                          </td>
-                          <td
-                            colSpan="2"
-                            className="px-4 py-3 text-sm font-bold text-blue-900"
-                          >
-                            PKR{" "}
-                            {returnForm.items
-                              .reduce(
-                                (sum, item) => sum + item.totalReturnAmount,
-                                0,
-                              )
-                              .toFixed(2)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Notes
-                  </label>
-                  <textarea
-                    value={returnForm.notes}
-                    onChange={(e) =>
-                      setReturnForm((prev) => ({
-                        ...prev,
-                        notes: e.target.value,
-                      }))
-                    }
-                    rows="2"
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    placeholder="Additional notes..."
-                  />
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={submitReturn}
-                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
-                  >
-                    Process Return & Adjust Stock
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSelectedPurchase(null);
-                      setPurchaseHistory([]);
-                    }}
-                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 text-sm"
-                  >
-                    Change Purchase
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <Modal
-        isOpen={modal.isOpen}
-        onClose={() => setModal({ ...modal, isOpen: false })}
-        title={modal.title}
-        message={modal.message}
-        type={modal.type}
-        onConfirm={modal.onConfirm}
-        showCancel={modal.type === "confirm" || modal.type === "success"}
-        confirmText={
-          modal.type === "confirm"
-            ? "Yes, Process Return"
-            : modal.type === "success"
-              ? "Print Receipt"
-              : "OK"
-        }
-        cancelText={modal.type === "success" ? "Skip" : "Cancel"}
-      />
-      <div className="p-6 bg-gray-50 min-h-screen">
-        <div className="max-w-7xl mx-auto">
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <h1 className="text-2xl font-bold text-gray-900">
-                Supplier Returns
-              </h1>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowReturnHistory(!showReturnHistory)}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
-                >
-                  <FiEye size={16} />
-                  {showReturnHistory ? "Hide" : "View"} Return History
-                </button>
-                <button
-                  onClick={() => setShowCreateForm(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  <FiPlus size={16} />
-                  New Return
-                </button>
-                <button
-                  onClick={fetchReturns}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                >
-                  <FiRefreshCw size={16} />
-                  Refresh
-                </button>
-              </div>
+              <div className="border-t border-dashed border-slate-400 my-4" />
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-dashed border-slate-400 text-slate-600">
+                    <th className="text-left py-2 font-bold">Item</th>
+                    <th className="text-center py-2 font-bold w-12">Qty</th>
+                    <th className="text-right py-2 font-bold w-20">Amt</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dashed divide-slate-200">
+                  {slipData.items.map((it, i) => (
+                    <tr key={i} className="text-slate-800">
+                      <td className="py-2.5">{it.medicineName}</td>
+                      <td className="text-center py-2.5 font-bold">{it.returnQty}</td>
+                      <td className="text-right py-2.5 font-bold">{Number(it.returnAmt).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-dashed border-slate-400">
+                    <td colSpan={2} className="pt-4 font-black text-base text-slate-900">TOTAL RETURN</td>
+                    <td className="text-right pt-4 font-black text-base text-slate-900">Rs {Number(slipData.totalReturnAmount).toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              <div className="border-t border-dashed border-slate-400 my-6" />
+              <div className="text-center text-slate-500 font-bold italic">Thank you!</div>
             </div>
           </div>
-
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-            {!showReturnHistory ? (
-              <div className="p-8 text-center">
-                <FiPackage size={48} className="mx-auto text-gray-400 mb-4" />
-                <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                  Supplier Returns Management
-                </h3>
-                <p className="text-gray-600 mb-6">
-                  Click "New Return" to create a return for items purchased from
-                  suppliers. You can search purchase history and select items to
-                  return with their quantities and prices.
-                </p>
-                <button
-                  onClick={() => setShowCreateForm(true)}
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  <FiPlus size={20} />
-                  Create New Return
-                </button>
-              </div>
-            ) : (
-              <>
-                {/* Return History Filters */}
-                <div className="p-4 border-b bg-gray-50">
-                  <h3 className="text-sm font-semibold mb-3">Filter Returns</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                    <input
-                      type="date"
-                      placeholder="Start Date"
-                      value={returnFilters.startDate}
-                      onChange={(e) =>
-                        setReturnFilters({
-                          ...returnFilters,
-                          startDate: e.target.value,
-                        })
-                      }
-                      className="px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    />
-                    <input
-                      type="date"
-                      placeholder="End Date"
-                      value={returnFilters.endDate}
-                      onChange={(e) =>
-                        setReturnFilters({
-                          ...returnFilters,
-                          endDate: e.target.value,
-                        })
-                      }
-                      className="px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Supplier Name"
-                      value={returnFilters.supplierName}
-                      onChange={(e) =>
-                        setReturnFilters({
-                          ...returnFilters,
-                          supplierName: e.target.value,
-                        })
-                      }
-                      className="px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Return Number"
-                      value={returnFilters.returnNumber}
-                      onChange={(e) =>
-                        setReturnFilters({
-                          ...returnFilters,
-                          returnNumber: e.target.value,
-                        })
-                      }
-                      className="px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    />
-                    <select
-                      value={returnFilters.status}
-                      onChange={(e) =>
-                        setReturnFilters({
-                          ...returnFilters,
-                          status: e.target.value,
-                        })
-                      }
-                      className="px-2 py-1.5 border border-gray-300 rounded text-sm"
-                    >
-                      <option value="">All Status</option>
-                      <option value="Pending">Pending</option>
-                      <option value="Processed">Processed</option>
-                      <option value="Rejected">Rejected</option>
-                    </select>
-                  </div>
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={applyReturnFilters}
-                      className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-                    >
-                      Apply Filters
-                    </button>
-                    <button
-                      onClick={clearReturnFilters}
-                      className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Return Details
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Supplier Info
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Amount
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Status
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {loading ? (
-                        <tr>
-                          <td
-                            colSpan="5"
-                            className="px-6 py-4 text-center text-gray-500"
-                          >
-                            Loading returns...
-                          </td>
-                        </tr>
-                      ) : returns.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan="5"
-                            className="px-6 py-4 text-center text-gray-500"
-                          >
-                            No supplier returns found
-                          </td>
-                        </tr>
-                      ) : (
-                        returns.map((returnItem) => (
-                          <tr key={returnItem._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">
-                                  {returnItem.returnNumber}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                  {new Date(
-                                    returnItem.returnDate,
-                                  ).toLocaleDateString()}
-                                </div>
-                                <div className="text-xs text-gray-400">
-                                  {returnItem.items?.length || 0} items
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">
-                                  {returnItem.supplierName}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                  {returnItem.supplierContact}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm font-medium text-gray-900">
-                                PKR{" "}
-                                {returnItem.totalReturnAmount?.toLocaleString()}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                {returnItem.refundMethod}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span
-                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(returnItem.refundStatus)}`}
-                              >
-                                {returnItem.refundStatus}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => {
-                                    setReceiptData(returnItem);
-                                    setShowReceipt(true);
-                                  }}
-                                  className="text-blue-600 hover:text-blue-900"
-                                  title="Print Receipt"
-                                >
-                                  <FiPrinter size={16} />
-                                </button>
-                                {returnItem.refundStatus === "Pending" && (
-                                  <>
-                                    <button
-                                      onClick={() =>
-                                        updateReturnStatus(
-                                          returnItem._id,
-                                          "Processed",
-                                          "Admin",
-                                        )
-                                      }
-                                      className="text-green-600 hover:text-green-900"
-                                      title="Approve"
-                                    >
-                                      <FiCheck size={16} />
-                                    </button>
-                                    <button
-                                      onClick={() =>
-                                        updateReturnStatus(
-                                          returnItem._id,
-                                          "Rejected",
-                                          "Admin",
-                                        )
-                                      }
-                                      className="text-red-600 hover:text-red-900"
-                                      title="Reject"
-                                    >
-                                      <FiX size={16} />
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
         </div>
-      </div>
-
-      {showReceipt && receiptData && (
-        <SupplierReturnReceipt
-          returnData={receiptData}
-          hospitalSettings={hospitalSettings}
-          onClose={() => {
-            setShowReceipt(false);
-            setReceiptData(null);
-          }}
-        />
       )}
-    </>
+
+      <Modal isOpen={modal.isOpen} onClose={() => setModal({ ...modal, isOpen: false })}
+        title={modal.title} message={modal.message} type={modal.type} onConfirm={modal.onConfirm} />
+    </div>
   );
 }

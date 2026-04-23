@@ -25,7 +25,8 @@ export default function LabLogin() {
           localStorage.setItem('lab_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role
+            role: user.role,
+            sidebarPermissions: user.sidebarPermissions || {}
           }))
           try { addActivity({ user: 'Lab', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/lab')

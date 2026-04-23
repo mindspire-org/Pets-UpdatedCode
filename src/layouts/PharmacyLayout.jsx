@@ -10,6 +10,12 @@ import {
   FiUsers,
   FiSettings,
   FiArrowLeft,
+  FiGrid,
+  FiCreditCard,
+  FiCornerUpLeft,
+  FiBell,
+  FiActivity,
+  FiTrendingDown,
 } from "react-icons/fi";
 import { MdLocalPharmacy } from "react-icons/md";
 import { useSettings } from "../context/SettingsContext";
@@ -20,41 +26,92 @@ export default function PharmacyLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const { settings } = useSettings();
+  const context = (function() {
+    try {
+      return useSettings();
+    } catch (e) {
+      console.warn("PharmacyLayout: useSettings failed", e);
+      return null;
+    }
+  })();
+  
+  const settings = context?.settings || {
+    companyName: 'Abbottabad Pet Hospital',
+    companyLogo: null
+  };
 
-  const menuItems = [
-    { path: "/pharmacy", icon: FiHome, label: "Dashboard", exact: true },
-    { path: "/pharmacy/pos", icon: FiShoppingCart, label: "Point of Sale" },
-    { path: "/pharmacy/medicines", icon: FiPackage, label: "Medicines" },
-    { path: "/pharmacy/suppliers", icon: FiUsers, label: "Suppliers" },
+  if (!context) {
+    return (
+      <div className="flex flex-col h-screen bg-slate-50">
+        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200">
+          <div className="px-3 md:px-5 py-2">
+            <div className="h-12 w-full rounded-full border border-purple-100 bg-purple-50/60 shadow-sm flex items-center justify-center">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-600"></div>
+            </div>
+          </div>
+        </header>
+        <main className="flex-1 flex items-center justify-center">
+          <p className="text-slate-500 font-medium">Initializing Pharmacy Portal...</p>
+        </main>
+      </div>
+    );
+  }
+
+  const menuGroups = [
     {
-      path: "/pharmacy/prescriptions",
-      icon: FiFileText,
-      label: "Prescriptions",
-    },
-    { path: "/pharmacy/referrals", icon: FiFileText, label: "Referrals" },
-    {
-      path: "/pharmacy/sales-history",
-      icon: FiFileText,
-      label: "Sales History",
-    },
-    {
-      path: "/pharmacy/purchase-history",
-      icon: FiFileText,
-      label: "Purchase History",
-    },
-    {
-      path: "/pharmacy/customer-returns",
-      icon: FiFileText,
-      label: "Customer Returns",
+      title: "Dashboard",
+      items: [
+        { path: "/pharmacy", icon: FiHome, label: "Dashboard", exact: true, id: "dashboard" },
+      ]
     },
     {
-      path: "/pharmacy/supplier-returns",
-      icon: FiFileText,
-      label: "Supplier Returns",
+      title: "POS",
+      items: [
+        { path: "/pharmacy/pos", icon: FiShoppingCart, label: "Point of Sale", id: "pos" },
+        { path: "/pharmacy/credit-customers", icon: FiCreditCard, label: "Credit Customers", id: "credit-customers" },
+      ]
     },
-    { path: "/pharmacy/reports", icon: FiFileText, label: "Reports" },
-    { path: "/pharmacy/settings", icon: FiSettings, label: "Settings" },
+    {
+      title: "Inventory",
+      items: [
+        { path: "/pharmacy/medicines", icon: FiPackage, label: "Inventory", id: "medicines" },
+        { path: "/pharmacy/suppliers", icon: FiUsers, label: "Suppliers", id: "suppliers" },
+        { path: "/pharmacy/companies", icon: FiGrid, label: "Companies", id: "companies" },
+        { path: "/pharmacy/purchase-orders", icon: FiFileText, label: "Purchase Orders", id: "purchase-orders" },
+      ]
+    },
+    {
+      title: "History",
+      items: [
+        { path: "/pharmacy/sales-history", icon: FiFileText, label: "Sales History", id: "sales-history" },
+        { path: "/pharmacy/purchase-history", icon: FiFileText, label: "Purchase History", id: "purchase-history" },
+        { path: "/pharmacy/return-history", icon: FiFileText, label: "Return History", id: "return-history" },
+      ]
+    },
+    {
+      title: "Return",
+      items: [
+        { path: "/pharmacy/sales-return", icon: FiCornerUpLeft, label: "Sales Return", id: "sales-return" },
+        { path: "/pharmacy/supplier-returns", icon: FiFileText, label: "Supplier Returns", id: "supplier-returns" },
+      ]
+    },
+    {
+      title: "Referral",
+      items: [
+        { path: "/pharmacy/referrals", icon: FiFileText, label: "Referrals", id: "referrals" },
+        { path: "/pharmacy/prescriptions", icon: FiFileText, label: "Prescriptions", id: "prescriptions" },
+      ]
+    },
+    {
+      title: "Other",
+      items: [
+        { path: "/pharmacy/reports", icon: FiFileText, label: "Reports", id: "reports" },
+        { path: "/pharmacy/notifications", icon: FiBell, label: "Notifications", id: "notifications" },
+        { path: "/pharmacy/audit-logs", icon: FiActivity, label: "Audit Logs", id: "audit-logs" },
+        { path: "/pharmacy/expenses", icon: FiTrendingDown, label: "Expenses", id: "expenses" },
+        { path: "/pharmacy/settings", icon: FiSettings, label: "Settings", id: "settings" },
+      ]
+    }
   ];
 
   const isActive = (path, exact = false) => {
@@ -86,6 +143,16 @@ export default function PharmacyLayout() {
     localStorage.getItem("pharmacy_auth") || "{}",
   );
 
+  const sidebarPermissions = pharmacyUser.sidebarPermissions || {};
+
+  const filterItems = (items) => {
+    if (pharmacyUser.role === 'admin' || pharmacyUser.role === 'Admin') return items;
+    if (!sidebarPermissions.pharmacy) return items;
+    
+    const allowedPages = sidebarPermissions.pharmacy;
+    return items.filter(item => allowedPages.includes(item.id));
+  };
+
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       {/* Top Header */}
@@ -93,13 +160,6 @@ export default function PharmacyLayout() {
         <div className="px-3 md:px-5 py-2">
           <div className="h-12 w-full rounded-full border border-purple-100 bg-purple-50/60 shadow-sm flex items-center justify-between px-2">
             <div className="flex items-center gap-2">
-              <Link
-                to="/"
-                className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-600 hover:text-slate-800 border border-slate-200"
-                aria-label="Back to modules"
-              >
-                <FiArrowLeft className="h-5 w-5" />
-              </Link>
               <button
                 onClick={handleToggle}
                 className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-600 hover:text-slate-800 border border-slate-200"
@@ -121,24 +181,17 @@ export default function PharmacyLayout() {
                 <div className="text-sm md:text-base font-semibold tracking-wide text-slate-800 truncate">
                   {settings.companyName || "Abbottabad Pet Hospital"}
                   <span className="ml-2 text-xs font-medium text-purple-600 align-middle">
-                    Pharmacy Portal •{" "}
-                    {pharmacyUser.name ||
-                      pharmacyUser.username ||
-                      "Pharmacy Staff"}
+                    Pharmacy Portal
                   </span>
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pr-2">
               <div className="text-sm text-slate-600 hidden md:block">
-                Welcome
+                Welcome <span className="font-bold text-slate-900">{pharmacyUser.username}</span>
+                <span className="mx-1">-</span>
+                <span className="capitalize text-purple-600 font-medium">{pharmacyUser.role}</span>
               </div>
-              <button
-                onClick={handleLogout}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-full transition-colors"
-              >
-                Logout
-              </button>
             </div>
           </div>
         </div>
@@ -156,60 +209,79 @@ export default function PharmacyLayout() {
         {/* Sidebar */}
         <aside
           className={`
-          ${sidebarOpen ? "w-64" : "w-20"} 
+          ${sidebarOpen ? "w-56" : "w-20"} 
           ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
           fixed md:relative z-50 md:z-auto
           bg-white border-r border-slate-200 
           transition-all duration-300 
           flex flex-col h-full
+          group/sidebar
         `}
         >
           {/* Navigation */}
-          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-            {menuItems.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.path, item.exact);
+          <nav className="flex-1 py-4 overflow-y-auto custom-sidebar-scrollbar">
+            {menuGroups.map((group, groupIdx) => {
+              const filteredItems = filterItems(group.items);
+              if (filteredItems.length === 0) return null;
 
               return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all ${
-                    active
-                      ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-md"
-                      : "text-slate-600 hover:bg-slate-100"
-                  }`}
-                  title={!sidebarOpen ? item.label : ""}
-                >
-                  <div
-                    className={`flex items-center justify-center ${!sidebarOpen && "mx-auto"}`}
-                  >
-                    <Icon className="w-6 h-6" strokeWidth={2} />
-                  </div>
+                <div key={group.title} className={`${groupIdx !== 0 ? 'mt-6' : ''}`}>
                   {sidebarOpen && (
-                    <span className="text-sm font-medium">{item.label}</span>
+                    <div className="px-6 mb-2">
+                      <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.1em]">
+                        {group.title}
+                      </h3>
+                    </div>
                   )}
-                </Link>
+                  <div className="px-3 space-y-1">
+                    {filteredItems.map((item) => {
+                      const Icon = item.icon;
+                      const active = isActive(item.path, item.exact);
+
+                      return (
+                        <Link
+                          key={item.path}
+                          to={item.path}
+                          onClick={() => setMobileMenuOpen(false)}
+                          className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all ${
+                            active
+                              ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-md shadow-purple-100"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-purple-600"
+                          }`}
+                          title={!sidebarOpen ? item.label : ""}
+                        >
+                          <div className={`flex items-center justify-center ${!sidebarOpen && "mx-auto"}`}>
+                            <Icon className={`${active ? 'w-5 h-5' : 'w-5 h-5 text-slate-400 group-hover/sidebar:text-purple-500'}`} strokeWidth={active ? 2.5 : 2} />
+                          </div>
+                          {sidebarOpen && (
+                            <span className={`text-[13px] ${active ? 'font-bold' : 'font-semibold'}`}>
+                              {item.label}
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
+            
+            {/* Integrated Logout Button */}
+            <div className="px-3 mt-8 pb-4">
+              <button
+                onClick={handleLogout}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-red-600 hover:bg-red-50 transition-all border border-transparent hover:border-red-100 ${!sidebarOpen ? 'justify-center' : ''}`}
+                title={!sidebarOpen ? "Logout" : ""}
+              >
+                <FiLogOut className="w-5 h-5" />
+                {sidebarOpen && <span className="text-[13px] font-bold">Logout</span>}
+              </button>
+            </div>
           </nav>
-
-          {/* Footer */}
-          <div className="p-4 border-t border-slate-200 space-y-2">
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-red-600 hover:bg-red-50 w-full transition-colors"
-              title={!sidebarOpen ? "Logout" : ""}
-            >
-              <FiLogOut className={`w-5 h-5 ${!sidebarOpen && "mx-auto"}`} />
-              {sidebarOpen && <span>Logout</span>}
-            </button>
-          </div>
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
           <div className="p-4 md:p-6 w-full min-w-0">
             <DaySessionBanner
               portal="pharmacy"

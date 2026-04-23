@@ -105,4 +105,23 @@ router.delete('/:username', async (req, res) => {
   }
 });
 
+// Update sidebar permissions for a user
+router.put('/:username/permissions', async (req, res) => {
+  try {
+    const { sidebarPermissions } = req.body;
+    const user = await User.findOneAndUpdate(
+      { username: req.params.username },
+      { sidebarPermissions },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, data: user });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
 export default router;
