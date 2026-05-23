@@ -76,6 +76,7 @@ const createEmptyItem = () => {
     unitsPerPack: 1,
     buyPerPack: 0,
     salePerPack: 0,
+    totalItems: 0,
     minStock: 0,
     defaultDiscount: 0,
     lineTaxType: "%",
@@ -177,6 +178,7 @@ export default function AddInvoice() {
         unitsPerPack: item.unitsPerPack || 1,
         buyPerPack: item.buyPerPack || 0,
         salePerPack: item.salePerPack || 0,
+        totalItems: item.totalItems != null ? item.totalItems : undefined,
         minStock: item.minStock || 0,
         defaultDiscount: item.defaultDiscount || 0,
         lineTaxType: item.lineTaxType || "%",
@@ -370,6 +372,7 @@ export default function AddInvoice() {
       unitsPerPack: item.unitsPerPack || 1,
       buyPerPack: item.buyPerPack || 0,
       salePerPack: item.salePerPack || 0,
+      totalItems: item.totalItems != null ? item.totalItems : undefined,
       minStock: item.minStock || 0,
       defaultDiscount: item.defaultDiscount || 0,
       lineTaxType: item.lineTaxType || "%",
@@ -716,6 +719,7 @@ export default function AddInvoice() {
         const lineTotal = subtotal + taxAmt;
         grossTotal += subtotal;
         totalLineTaxes += taxAmt;
+        const totalItems = item.totalItems != null ? Number(item.totalItems) : (item.qtyPacks || 0) * uPack;
         return {
           mainCategory:    item.mainCategory,
           subCategory:     item.subCategory,
@@ -729,7 +733,7 @@ export default function AddInvoice() {
           unitsPerPack:    uPack,
           buyPerPack:      item.buyPerPack || 0,
           salePerPack:     item.salePerPack || 0,
-          totalItems:      (item.qtyPacks || 0) * uPack,
+          totalItems,
           buyPerUnit:      uPack > 0 ? +((item.buyPerPack || 0) / uPack).toFixed(4) : 0,
           salePerUnit:     uPack > 0 ? +((item.salePerPack || 0) / uPack).toFixed(4) : 0,
           minStock:        item.minStock || 0,
@@ -1708,7 +1712,8 @@ function InvoiceItemCard({ item, idx, canRemove, onUpdate, onRemove, onAddMainCa
   // Only calculate line tax on subtotal, not after discount
   const tax = item.lineTaxType === "%" ? subtotal * ((item.lineTaxValue || 0) / 100) : (item.lineTaxValue || 0);
   const lineTotal = subtotal + tax;
-  const totalItems = (item.qtyPacks || 0) * uPack;
+  const computedTotalItems = (item.qtyPacks || 0) * uPack;
+  const totalItems = item.totalItems != null ? Number(item.totalItems) : computedTotalItems;
 
   const mainCatOptions = (() => {
     const hidden = getHiddenMainCategories();
@@ -1886,16 +1891,21 @@ function InvoiceItemCard({ item, idx, canRemove, onUpdate, onRemove, onAddMainCa
               </div>
             ))}
             {[
-              { label: "Buy/Unit", value: uPack > 0 ? ((item.buyPerPack || 0) / uPack).toFixed(2) : "0.00" },
-              { label: "Sale/Unit", value: uPack > 0 ? ((item.salePerPack || 0) / uPack).toFixed(2) : "0.00" },
-              { label: "Total Items", value: String(totalItems) },
-            ].map(({ label, value }) => (
+              { label: "Buy/Unit", value: uPack > 0 ? ((item.buyPerPack || 0) / uPack).toFixed(2) : "0.00", readOnly: true },
+              { label: "Sale/Unit", value: uPack > 0 ? ((item.salePerPack || 0) / uPack).toFixed(2) : "0.00", readOnly: true },
+            ].map(({ label, value, readOnly }) => (
               <div key={label}>
                 <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-                <input type="text" readOnly value={value}
+                <input type="text" readOnly={readOnly} value={value}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-100 text-sm text-slate-600 cursor-not-allowed" />
               </div>
             ))}
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Total Items</label>
+              <input type="number" min="0" value={totalItems}
+                onChange={(e) => onUpdate({ totalItems: Number(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm" />
+            </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Min Stock</label>
               <input type="number" min="0" value={item.minStock}

@@ -76,7 +76,9 @@ export const usersAPI = {
 
 export const sidebarConfigAPI = {
   getAll: () => apiCall("/sidebar-config"),
+  getByPortal: (portalId) => apiCall(`/sidebar-config/${portalId}`),
   getByPortalId: (portalId) => apiCall(`/sidebar-config/${portalId}`),
+  update: (portalId, data) => apiCall(`/sidebar-config/${portalId}`, "PUT", data),
 };
 
 // Pets API
@@ -122,6 +124,7 @@ export const medicinesAPI = {
   update: (id, medicineData) =>
     apiCall(`/medicines/${id}`, "PUT", medicineData),
   delete: (id) => apiCall(`/medicines/${id}`, "DELETE"),
+  getLowStock: () => apiCall("/medicines/alerts/low-stock"),
 };
 
 // Lab Reports API
@@ -395,6 +398,7 @@ export const holdBillsAPI = {
   getAll: () => apiCall("/hold-bills"),
   getById: (id) => apiCall(`/hold-bills/${id}`),
   create: (data) => apiCall("/hold-bills", "POST", data),
+  update: (id, data) => apiCall(`/hold-bills/${id}`, "PUT", data),
   delete: (id) => apiCall(`/hold-bills/${id}`, "DELETE"),
 };
 
@@ -402,6 +406,7 @@ export const holdInvoicesAPI = {
   getAll: () => apiCall("/hold-invoices"),
   getById: (id) => apiCall(`/hold-invoices/${id}`),
   create: (data) => apiCall("/hold-invoices", "POST", data),
+  update: (id, data) => apiCall(`/hold-invoices/${id}`, "PUT", data),
   delete: (id) => apiCall(`/hold-invoices/${id}`, "DELETE"),
 };
 
@@ -900,6 +905,21 @@ export const pharmacyInvoicesAPI = {
   delete: (id) => apiCall(`/pharmacy-invoices/${id}`, "DELETE"),
 };
 
+// Petshop Pharmacy Invoices API
+export const petshopPharmacyInvoicesAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop-invoices${q ? `?${q}` : ""}`);
+  },
+  getById: (id) => apiCall(`/petshop-invoices/${id}`),
+  create: (data) => apiCall("/petshop-invoices", "POST", data),
+  update: (id, data) => apiCall(`/petshop-invoices/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop-invoices/${id}`, "DELETE"),
+};
+
 // Pharmacy Purchase Drafts API
 export const pharmacyPurchaseDraftsAPI = {
   getAll: (params = {}) => {
@@ -925,6 +945,28 @@ export const pharmacyPurchaseDraftsAPI = {
     apiCall(`/pharmacy-purchase-drafts/stats/summary?portal=${encodeURIComponent(portal)}`),
 };
 
+// Petshop Pharmacy Purchase Drafts API
+export const petshopPharmacyPurchaseDraftsAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop-purchase-drafts${q ? `?${q}` : ""}`);
+  },
+  getById: (id) => apiCall(`/petshop-purchase-drafts/${id}`),
+  create: (data) => apiCall("/petshop-purchase-drafts", "POST", data),
+  update: (id, data) => apiCall(`/petshop-purchase-drafts/${id}`, "PUT", data),
+  approve: (id, reviewData) => apiCall(`/petshop-purchase-drafts/${id}/approve`, "POST", reviewData),
+  reject:  (id, reviewData) => apiCall(`/petshop-purchase-drafts/${id}/reject`,  "POST", reviewData),
+  approveItem: (draftId, itemId, reviewData) =>
+    apiCall(`/petshop-purchase-drafts/${draftId}/items/${itemId}/approve`, "POST", reviewData),
+  rejectItem: (draftId, itemId, reviewData) =>
+    apiCall(`/petshop-purchase-drafts/${draftId}/items/${itemId}/reject`,  "POST", reviewData),
+  delete: (id) => apiCall(`/petshop-purchase-drafts/${id}`, "DELETE"),
+  getStats: () => apiCall("/petshop-purchase-drafts/stats/summary"),
+};
+
 // Companies API (Pharmacy)
 export const companiesAPI = {
   getAll: (portal = "pharmacy", status = "") => {
@@ -940,6 +982,230 @@ export const companiesAPI = {
   create: (data) => apiCall("/companies", "POST", data),
   update: (id, data) => apiCall(`/companies/${id}`, "PUT", data),
   delete: (id) => apiCall(`/companies/${id}`, "DELETE"),
+};
+
+// Vaccines API
+export const vaccinesAPI = {
+  getAll: () => apiCall("/vaccines"),
+  getById: (id) => apiCall(`/vaccines/${id}`),
+  create: (data) => apiCall("/vaccines", "POST", data),
+  update: (id, data) => apiCall(`/vaccines/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/vaccines/${id}`, "DELETE"),
+};
+
+// Procedure Patients API
+export const procedurePatientsAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/procedure-patients${q ? `?${q}` : ""}`);
+  },
+  getById: (petId) => apiCall(`/procedure-patients/${petId}`),
+};
+
+// Procedure Plans API
+export const procedurePlansAPI = {
+  getPatient: (petId) => apiCall(`/procedure-plans/patient/${petId}`),
+  createPatient: (petId, data) =>
+    apiCall(`/procedure-plans/patient/${petId}`, "POST", data),
+  addSession: (planId, data) =>
+    apiCall(`/procedure-plans/${planId}/sessions`, "POST", data),
+  updateSession: (sessionId, data) =>
+    apiCall(`/procedure-plans/sessions/${sessionId}`, "PUT", data),
+  paySession: (sessionId, data) =>
+    apiCall(`/procedure-plans/sessions/${sessionId}/pay`, "PUT", data),
+  completeSession: (sessionId) =>
+    apiCall(`/procedure-plans/sessions/${sessionId}/complete`, "PUT"),
+  completePlan: (planId) =>
+    apiCall(`/procedure-plans/${planId}/complete`, "PUT"),
+  uploadPhoto: (sessionId, data) =>
+    apiCall(`/procedure-plans/sessions/${sessionId}/photos`, "PUT", data),
+  deletePhoto: (sessionId, type) =>
+    apiCall(`/procedure-plans/sessions/${sessionId}/photos/${type}`, "DELETE"),
+};
+
+// Shot Reminders API
+export const shotRemindersAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/shot-reminders${q ? `?${q}` : ""}`);
+  },
+  sync: () => apiCall("/shot-reminders/sync", "POST"),
+  updateStatus: (id, status) =>
+    apiCall(`/shot-reminders/${id}/status`, "PUT", { status }),
+  getUpcoming: () => apiCall("/shot-reminders/upcoming"),
+};
+
+// Pet Shop Companies API
+export const petShopCompaniesAPI = {
+  getAll: (portal = "shop", status = "") => {
+    const q = [];
+    if (status && status !== "all") q.push(`status=${encodeURIComponent(status)}`);
+    const qs = q.length ? `?${q.join("&")}` : "";
+    return apiCall(`/petshop-companies${qs}`);
+  },
+  getById: (id) => apiCall(`/petshop-companies/${id}`),
+  search: (query, portal = "shop") =>
+    apiCall(`/petshop-companies/search/${encodeURIComponent(query)}?portal=${portal}`),
+  create: (data) => apiCall("/petshop-companies", "POST", data),
+  update: (id, data) => apiCall(`/petshop-companies/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop-companies/${id}`, "DELETE"),
+};
+
+// Pet Shop Suppliers API
+export const petShopSuppliersAPI = {
+  getAll: (portal = "", status = "") => {
+    const q = [];
+    if (status && status !== "all") q.push(`status=${encodeURIComponent(status)}`);
+    const qs = q.length ? `?${q.join("&")}` : "";
+    return apiCall(`/petshop-suppliers${qs}`);
+  },
+  getById: (id) => apiCall(`/petshop-suppliers/${id}`),
+  create: (data) => apiCall("/petshop-suppliers", "POST", data),
+  bulkUpsert: (items) =>
+    apiCall(
+      "/petshop-suppliers/bulk",
+      "POST",
+      Array.isArray(items) ? items : { items },
+    ),
+  update: (id, data) => apiCall(`/petshop-suppliers/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop-suppliers/${id}`, "DELETE"),
+  addPurchase: (id, data) => apiCall(`/petshop-suppliers/${id}/purchase`, "POST", data),
+  updatePurchase: (id, purchaseId, data) =>
+    apiCall(`/petshop-suppliers/${id}/purchase/${purchaseId}`, "PUT", data),
+  deletePurchase: (id, purchaseId) =>
+    apiCall(`/petshop-suppliers/${id}/purchase/${purchaseId}`, "DELETE"),
+  addPayment: (id, data) => apiCall(`/petshop-suppliers/${id}/payment`, "POST", data),
+  getPharmacyInvoices: (id) => apiCall(`/petshop-suppliers/${id}/pharmacy-invoices`),
+  getPharmacyItems: (id) => apiCall(`/petshop-suppliers/${id}/pharmacy-items`),
+  getPurchaseItems: (id) => apiCall(`/petshop-suppliers/${id}/purchase-items`),
+  getInvoices: (id) => apiCall(`/petshop-suppliers/${id}/invoices`),
+  getItems: (id) => apiCall(`/petshop-suppliers/${id}/items`),
+};
+
+// Petshop Pharmacy Settings API
+export const petshopPharmacySettingsAPI = {
+  get: () => apiCall("/petshop-settings"),
+  save: (data) => apiCall("/petshop-settings", "POST", data),
+  update: (data) => apiCall("/petshop-settings", "PUT", data),
+};
+
+// Petshop Notifications API
+export const petshopNotificationsAPI = {
+  getAll: () => apiCall("/petshop-notifications"),
+  markAsRead: (id) => apiCall(`/petshop-notifications/${id}/read`, "PUT"),
+  delete: (id) => apiCall(`/petshop-notifications/${id}`, "DELETE"),
+};
+
+// Petshop Pharmacy Medicines API
+export const petshopPharmacyMedicinesAPI = {
+  getAll: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop/medicines${q ? `?${q}` : ""}`);
+  },
+  getById: (id) => apiCall(`/petshop/medicines/${id}`),
+  create: (data) => apiCall("/petshop/medicines", "POST", data),
+  update: (id, data) => apiCall(`/petshop/medicines/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop/medicines/${id}`, "DELETE"),
+  getLowStock: () => apiCall("/petshop/medicines/alerts/low-stock"),
+  getExpiring: () => apiCall("/petshop/medicines/alerts/expiring"),
+  getExpired: () => apiCall("/petshop/medicines/alerts/expired"),
+  search: (query) => apiCall(`/petshop/medicines/search/${encodeURIComponent(query)}`),
+  findByBarcode: (barcode) => apiCall(`/petshop/medicines/find-by-barcode/${encodeURIComponent(barcode)}`),
+};
+
+// Petshop Pharmacy Sales API
+export const petshopPharmacySalesAPI = {
+  getAll: () => apiCall("/petshop/sales"),
+  getById: (id) => apiCall(`/petshop/sales/${id}`),
+  create: (data) => apiCall("/petshop/sales", "POST", data),
+  update: (id, data) => apiCall(`/petshop/sales/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop/sales/${id}`, "DELETE"),
+  getByDateRange: (startDate, endDate) => apiCall(`/petshop/sales/date-range/${startDate}/${endDate}`),
+};
+
+// Petshop Pharmacy Dues API
+export const petshopPharmacyDuesAPI = {
+  getAll: () => apiCall("/petshop/dues"),
+  getByClientId: (clientId) => apiCall(`/petshop/dues/${clientId}`),
+  update: (clientId, data) => apiCall(`/petshop/dues/${clientId}`, "PUT", data),
+};
+
+// Petshop Pharmacy Credit Customers API
+export const petshopPharmacyCreditCustomersAPI = {
+  getAll: () => apiCall("/petshop/credit-customers"),
+  getById: (id) => apiCall(`/petshop/credit-customers/${id}`),
+  create: (data) => apiCall("/petshop/credit-customers", "POST", data),
+  update: (id, data) => apiCall(`/petshop/credit-customers/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop/credit-customers/${id}`, "DELETE"),
+  getSales: (id) => apiCall(`/petshop/credit-customers/${id}/sales`),
+  pay: (id, data) => apiCall(`/petshop/credit-customers/${id}/pay`, "POST", data),
+  getPaymentHistory: (id) => apiCall(`/petshop/credit-customers/${id}/payment-history`),
+};
+
+// Petshop Pharmacy History API
+export const petshopPharmacyHistoryAPI = {
+  getSalesHistory: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop-history/sales-history${q ? `?${q}` : ""}`);
+  },
+  getSalesHistoryById: (id) => apiCall(`/petshop-history/sales-history/${id}`),
+  updateSalesHistory: (id, data) => apiCall(`/petshop-history/sales-history/${id}`, "PUT", data),
+  deleteSalesHistory: (id) => apiCall(`/petshop-history/sales-history/${id}`, "DELETE"),
+  getPurchaseHistory: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop-history/purchase-history${q ? `?${q}` : ""}`);
+  },
+  getPurchaseHistoryById: (id) => apiCall(`/petshop-history/purchase-history/${id}`),
+  updatePurchaseHistory: (id, data) => apiCall(`/petshop-history/purchase-history/${id}`, "PUT", data),
+  deletePurchaseHistory: (id) => apiCall(`/petshop-history/purchase-history/${id}`, "DELETE"),
+  getReturns: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop-history/returns${q ? `?${q}` : ""}`);
+  },
+  getReturnHistory: (params = {}) => {
+    const q = Object.entries(params)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join("&");
+    return apiCall(`/petshop-history/return-history${q ? `?${q}` : ""}`);
+  },
+  getInventorySummary: () => apiCall("/petshop-history/inventory-summary"),
+  createCustomerReturn: (data) => apiCall("/petshop-history/returns/customer", "POST", data),
+  createSupplierReturn: (data) => apiCall("/petshop-history/returns/supplier", "POST", data),
+  updateReturnStatus: (id, data) => apiCall(`/petshop-history/returns/${id}/status`, "PUT", data),
+};
+
+// Petshop Pharmacy Reports API
+export const petshopPharmacyReportsAPI = {
+  getSales: () => apiCall("/petshop-reports/sales"),
+  getInventory: () => apiCall("/petshop-reports/inventory"),
+};
+
+// Petshop Hold Bills API
+export const petShopHoldBillsAPI = {
+  getAll: () => apiCall("/petshop-hold-bills"),
+  getById: (id) => apiCall(`/petshop-hold-bills/${id}`),
+  create: (data) => apiCall("/petshop-hold-bills", "POST", data),
+  update: (id, data) => apiCall(`/petshop-hold-bills/${id}`, "PUT", data),
+  delete: (id) => apiCall(`/petshop-hold-bills/${id}`, "DELETE"),
 };
 
 export default {
@@ -976,7 +1242,33 @@ export default {
   companies: companiesAPI,
   pharmacyInvoices: pharmacyInvoicesAPI,
   pharmacyPurchaseDrafts: pharmacyPurchaseDraftsAPI,
+  petshopPharmacyInvoices: petshopPharmacyInvoicesAPI,
+  petshopPharmacyPurchaseDrafts: petshopPharmacyPurchaseDraftsAPI,
   procedureCatalog: procedureCatalogAPI,
+  vaccines: vaccinesAPI,
+  procedurePatients: procedurePatientsAPI,
+  procedurePlans: procedurePlansAPI,
+  shotReminders: shotRemindersAPI,
+  petShopCompanies: petShopCompaniesAPI,
+  petShopSuppliers: petShopSuppliersAPI,
+  petshopPharmacyHistory: petshopPharmacyHistoryAPI,
+  petshopPharmacySettings: petshopPharmacySettingsAPI,
+  petshopNotifications: petshopNotificationsAPI,
+  petshopPharmacyCreditCustomers: petshopPharmacyCreditCustomersAPI,
+  petshopPharmacyMedicines: petshopPharmacyMedicinesAPI,
+  petshopPharmacySales: petshopPharmacySalesAPI,
+  petshopPharmacyDues: petshopPharmacyDuesAPI,
+  petshopPharmacyReports: petshopPharmacyReportsAPI,
+  sidebarConfig: sidebarConfigAPI,
+  holdBills: holdBillsAPI,
+  holdInvoices: holdInvoicesAPI,
+  petshopHoldBills: petShopHoldBillsAPI,
+  pharmacyHistory: pharmacyHistoryAPI,
+  pharmacyMedicines: pharmacyMedicinesAPI,
+  pharmacySales: pharmacySalesAPI,
+  pharmacyReports: pharmacyReportsAPI,
+  pharmacyDues: pharmacyDuesAPI,
+  pharmacyCreditCustomers: pharmacyCreditCustomersAPI,
   fullRecord: fullRecordAPI,
   financialSummary: financialSummaryAPI,
   backup: backupAPI,

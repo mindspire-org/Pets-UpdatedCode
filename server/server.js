@@ -5,6 +5,7 @@ import connectDB from "./config/database.js";
 import User from "./models/User.js";
 import Pet from "./models/Pet.js";
 import PharmacyMedicine from "./models/PharmacyMedicine.js";
+import SidebarConfig from "./models/SidebarConfig.js";
 
 // Import routes
 import userRoutes from "./routes/userRoutes.js";
@@ -12,6 +13,7 @@ import petRoutes from "./routes/petRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
 import prescriptionRoutes from "./routes/prescriptionRoutes.js";
 import medicineRoutes from "./routes/medicineRoutes.js";
+import vaccineRoutes from "./routes/vaccineRoutes.js";
 import labReportRoutes from "./routes/labReportRoutes.js";
 import labTestRoutes from "./routes/labTestRoutes.js";
 import labRequestRoutes from "./routes/labRequestRoutes.js";
@@ -31,6 +33,8 @@ import pharmacyHistoryRoutes from "./routes/pharmacyHistoryRoutes.js";
 import taxonomyRoutes from "./routes/taxonomyRoutes.js";
 import procedureRoutes from "./routes/procedureRoutes.js";
 import procedureCatalogRoutes from "./routes/procedureCatalogRoutes.js";
+import procedurePatientRoutes from "./routes/procedurePatientRoutes.js";
+import procedurePlanRoutes from "./routes/procedurePlanRoutes.js";
 import fullRecordRoutes from "./routes/fullRecordRoutes.js";
 import financialSummaryRoutes from "./routes/financialSummaryRoutes.js";
 import backupRoutes from "./routes/backupRoutes.js";
@@ -44,6 +48,8 @@ import voucherRoutes from "./routes/voucherRoutes.js";
 import budgetRoutes from "./routes/budgetRoutes.js";
 import medicalFormRoutes from "./routes/medicalFormRoutes.js";
 import companyRoutes from "./routes/companyRoutes.js";
+import petShopCompanyRoutes from "./routes/petShopCompanyRoutes.js";
+import petShopSupplierRoutes from "./routes/petShopSupplierRoutes.js";
 import purchaseOrderRoutes from "./routes/purchaseOrderRoutes.js";
 import pharmacyInvoiceRoutes from "./routes/pharmacyInvoiceRoutes.js";
 import pharmacyPurchaseDraftRoutes from "./routes/pharmacyPurchaseDraftRoutes.js";
@@ -51,7 +57,14 @@ import holdBillRoutes from "./routes/holdBillRoutes.js";
 import holdInvoiceRoutes from "./routes/holdInvoiceRoutes.js";
 import pharmacySettingsRoutes from "./routes/pharmacySettingsRoutes.js";
 import sidebarConfigRoutes from "./routes/sidebarConfigRoutes.js";
-import SidebarConfig from "./models/SidebarConfig.js";
+import shotReminderRoutes from "./routes/shotReminderRoutes.js";
+import petShopHoldBillRoutes from "./routes/petShopHoldBillRoutes.js";
+import petshopPharmacyRoutes from "./routes/petshopPharmacyRoutes.js";
+import petshopPharmacyHistoryRoutes from "./routes/petshopPharmacyHistoryRoutes.js";
+import petshopPharmacyInvoiceRoutes from "./routes/petshopPharmacyInvoiceRoutes.js";
+import petshopPharmacyPurchaseDraftRoutes from "./routes/petshopPharmacyPurchaseDraftRoutes.js";
+import petshopPharmacySettingsRoutes from "./routes/petshopPharmacySettingsRoutes.js";
+import petshopNotificationRoutes from "./routes/petshopNotificationRoutes.js";
 
 dotenv.config();
 
@@ -112,35 +125,77 @@ connectDB();
         version: 1,
         groups: [
           {
-            id: "main",
-            title: "",
+            id: "dashboard",
+            title: null,
             order: 0,
             items: [
               { id: "dashboard", label: "Dashboard", path: "/admin", iconKey: "FiGrid", order: 0, end: true },
-              { id: "users", label: "Users", path: "/admin/users", iconKey: "FiUsers", order: 1 },
-              { id: "sidebar-permissions", label: "Sidebar Permissions", path: "/admin/sidebar-permissions", iconKey: "FiShield", order: 2 },
-              { id: "doctors", label: "Doctors", path: "/admin/doctors", iconKey: "FiUserCheck", order: 3 },
-              { id: "staff", label: "Staff Management", path: "/admin/staff", iconKey: "FiUserPlus", order: 4 },
-              { id: "pets", label: "Pets Records", path: "/admin/pets", iconKey: "FiBookOpen", order: 5 },
-              { id: "clients", label: "Clients Directory", path: "/admin/clients", iconKey: "FiUserCheck", order: 6 },
-              { id: "financials", label: "Financial Reports", path: "/admin/financials", iconKey: "FiDollarSign", order: 7 },
-              { id: "finance-center", label: "Finance and Center", path: "/admin/finance-center", iconKey: "FiDollarSign", order: 8 },
-              { id: "accounting-overview", label: "Accounting Overview", path: "/admin/accounting-overview", iconKey: "FiDollarSign", order: 9 },
-              { id: "chart-of-accounts", label: "Chart of Accounts", path: "/admin/chart-of-accounts", iconKey: "FiBookOpen", order: 10 },
-              { id: "vouchers", label: "Vouchers", path: "/admin/vouchers", iconKey: "FiDollarSign", order: 11 },
-              { id: "petty-cash", label: "Petty Cash", path: "/admin/petty-cash", iconKey: "FiDollarSign", order: 12 },
-              { id: "suppliers", label: "Suppliers", path: "/admin/suppliers", iconKey: "FiUsers", order: 13 },
-              { id: "receivables", label: "Receivables", path: "/admin/receivables", iconKey: "FiDollarSign", order: 14 },
-              { id: "payables", label: "Payables", path: "/admin/payables", iconKey: "FiDollarSign", order: 15 },
-              { id: "vendor-payments", label: "Vendor Payments", path: "/admin/vendor-payments", iconKey: "FiDollarSign", order: 16 },
-              { id: "budget-planner", label: "Budget Planner", path: "/admin/budget-planner", iconKey: "FiDollarSign", order: 17 },
-              { id: "staff-advances", label: "Staff Advances", path: "/admin/staff-advances", iconKey: "FiDollarSign", order: 18 },
-              { id: "day-sessions", label: "Day Sessions", path: "/admin/day-sessions", iconKey: "FiClock", order: 19 },
-              { id: "expenses", label: "Expenses", path: "/admin/expenses", iconKey: "FiTrendingDown", order: 20 },
-              { id: "inventory", label: "Inventory", path: "/admin/inventory", iconKey: "FiBox", order: 21 },
-              { id: "hospital-inventory", label: "Hospital Inventory", path: "/admin/hospital-inventory", iconKey: "FiHome", order: 22 },
-              { id: "logs", label: "System Logs", path: "/admin/logs", iconKey: "FiActivity", order: 23 },
-              { id: "settings", label: "Settings", path: "/admin/settings", iconKey: "FiSettings", order: 24 },
+            ],
+          },
+          {
+            id: "pets-clients",
+            title: "Pets & Clients",
+            order: 1,
+            items: [
+              { id: "pets", label: "Pets Records", path: "/admin/pets", iconKey: "FiBookOpen", order: 0 },
+              { id: "clients", label: "Clients Directory", path: "/admin/clients", iconKey: "FiUserCheck", order: 1 },
+            ],
+          },
+          {
+            id: "inventory",
+            title: "Inventory",
+            order: 2,
+            items: [
+              { id: "inventory", label: "Inventory", path: "/admin/inventory", iconKey: "FiBox", order: 0 },
+              { id: "hospital-inventory", label: "Hospital Inventory", path: "/admin/hospital-inventory", iconKey: "FiHome", order: 1 },
+            ],
+          },
+          {
+            id: "accounts-finance",
+            title: "Accounts & Finance",
+            order: 3,
+            items: [
+              { id: "financials", label: "Financial Reports", path: "/admin/financials", iconKey: "FiDollarSign", order: 0 },
+              { id: "finance-center", label: "Finance and Center", path: "/admin/finance-center", iconKey: "FiDollarSign", order: 1 },
+              { id: "accounting-overview", label: "Accounting Overview", path: "/admin/accounting-overview", iconKey: "FiDollarSign", order: 2 },
+              { id: "chart-of-accounts", label: "Chart of Accounts", path: "/admin/chart-of-accounts", iconKey: "FiBookOpen", order: 3 },
+              { id: "vouchers", label: "Vouchers", path: "/admin/vouchers", iconKey: "FiDollarSign", order: 4 },
+              { id: "petty-cash", label: "Petty Cash", path: "/admin/petty-cash", iconKey: "FiDollarSign", order: 5 },
+              { id: "suppliers", label: "Suppliers", path: "/admin/suppliers", iconKey: "FiUsers", order: 6 },
+              { id: "receivables", label: "Receivables", path: "/admin/receivables", iconKey: "FiDollarSign", order: 7 },
+              { id: "payables", label: "Payables", path: "/admin/payables", iconKey: "FiDollarSign", order: 8 },
+              { id: "vendor-payments", label: "Vendor Payments", path: "/admin/vendor-payments", iconKey: "FiDollarSign", order: 9 },
+              { id: "budget-planner", label: "Budget Planner", path: "/admin/budget-planner", iconKey: "FiDollarSign", order: 10 },
+              { id: "staff-advances", label: "Staff Advances", path: "/admin/staff-advances", iconKey: "FiDollarSign", order: 11 },
+              { id: "day-sessions", label: "Day Sessions", path: "/admin/day-sessions", iconKey: "FiClock", order: 12 },
+              { id: "expenses", label: "Expenses", path: "/admin/expenses", iconKey: "FiTrendingDown", order: 13 },
+            ],
+          },
+          {
+            id: "staff-management",
+            title: "Staff Management",
+            order: 4,
+            items: [
+              { id: "doctors", label: "Doctors", path: "/admin/doctors", iconKey: "FiUserCheck", order: 0 },
+              { id: "staff", label: "Staff", path: "/admin/staff", iconKey: "FiUserPlus", order: 1 },
+            ],
+          },
+          {
+            id: "user-management",
+            title: "User Management",
+            order: 5,
+            items: [
+              { id: "users", label: "Users", path: "/admin/users", iconKey: "FiUsers", order: 0 },
+              { id: "sidebar-permissions", label: "Sidebar Permissions", path: "/admin/sidebar-permissions", iconKey: "FiShield", order: 1 },
+            ],
+          },
+          {
+            id: "other",
+            title: "Other",
+            order: 6,
+            items: [
+              { id: "logs", label: "System Logs", path: "/admin/logs", iconKey: "FiActivity", order: 0 },
+              { id: "settings", label: "Settings", path: "/admin/settings", iconKey: "FiSettings", order: 1 },
             ],
           },
         ],
@@ -205,7 +260,9 @@ connectDB();
             items: [
               { id: "dashboard", label: "Dashboard", path: "/doctor", iconKey: "FiGrid", order: 0, end: true },
               { id: "medicines", label: "Medicines", path: "/doctor/medicines", iconKey: "FiLayers", order: 1 },
+              { id: "vaccines", label: "Vaccines", path: "/doctor/vaccines", iconKey: "FiActivity", order: 1.5 },
               { id: "prescription", label: "Prescription", path: "/doctor/prescription", iconKey: "FiFileText", order: 2 },
+              { id: "prescription-history", label: "Prescription History", path: "/doctor/prescription-history", iconKey: "FiFileText", order: 2.5 },
               { id: "medical-forms", label: "Medical Forms", path: "/doctor/medical-forms", iconKey: "FiClipboard", order: 3 },
               { id: "medical-forms-history", label: "Medical Forms History", path: "/doctor/medical-forms-history", iconKey: "FiClipboard", order: 4 },
               { id: "details", label: "Doctor Details", path: "/doctor/details", iconKey: "FiUser", order: 5 },
@@ -229,6 +286,7 @@ connectDB();
               { id: "products", label: "Products", path: "/shop/products", iconKey: "FiPackage", order: 1 },
               { id: "pos", label: "Point of Sale", path: "/shop/pos", iconKey: "FiShoppingCart", order: 2 },
               { id: "suppliers", label: "Suppliers", path: "/shop/suppliers", iconKey: "FiTruck", order: 3 },
+              { id: "companies", label: "Companies", path: "/shop/companies", iconKey: "FiUsers", order: 3.5 },
               { id: "reports", label: "Sales Reports", path: "/shop/reports", iconKey: "FiBarChart2", order: 4 },
               { id: "settings", label: "Settings", path: "/shop/settings", iconKey: "FiSettings", order: 5 },
             ],
@@ -392,6 +450,7 @@ app.use("/api/pets", petRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/prescriptions", prescriptionRoutes);
 app.use("/api/medicines", medicineRoutes);
+app.use("/api/vaccines", vaccineRoutes);
 app.use("/api/lab-reports", labReportRoutes);
 app.use("/api/lab-tests", labTestRoutes);
 app.use("/api/lab-requests", labRequestRoutes);
@@ -414,6 +473,8 @@ app.use("/api/pharmacy-history", pharmacyHistoryRoutes);
 app.use("/api/taxonomy", taxonomyRoutes);
 app.use("/api/procedures", procedureRoutes);
 app.use("/api/procedure-catalog", procedureCatalogRoutes);
+app.use("/api/procedure-patients", procedurePatientRoutes);
+app.use("/api/procedure-plans", procedurePlanRoutes);
 app.use("/api/accounting", accountingRoutes);
 app.use("/api/vouchers", voucherRoutes);
 app.use("/api/day", daySessionRoutes);
@@ -424,13 +485,23 @@ app.use("/api/staff-advances", staffAdvanceRoutes);
 app.use("/api/budgets", budgetRoutes);
 app.use("/api/medical-forms", medicalFormRoutes);
 app.use("/api/companies", companyRoutes);
+app.use("/api/petshop-companies", petShopCompanyRoutes);
+app.use("/api/petshop-suppliers", petShopSupplierRoutes);
 app.use("/api/purchase-orders", purchaseOrderRoutes);
 app.use("/api/pharmacy-invoices", pharmacyInvoiceRoutes);
 app.use("/api/pharmacy-purchase-drafts", pharmacyPurchaseDraftRoutes);
 app.use("/api/hold-invoices", holdInvoiceRoutes);
 app.use("/api/hold-bills", holdBillRoutes);
+app.use("/api/petshop-hold-bills", petShopHoldBillRoutes);
 app.use("/api/pharmacy-settings", pharmacySettingsRoutes);
+app.use("/api/petshop", petshopPharmacyRoutes);
+app.use("/api/petshop-history", petshopPharmacyHistoryRoutes);
+app.use("/api/petshop-invoices", petshopPharmacyInvoiceRoutes);
+app.use("/api/petshop-purchase-drafts", petshopPharmacyPurchaseDraftRoutes);
+app.use("/api/petshop-settings", petshopPharmacySettingsRoutes);
+app.use("/api/petshop-notifications", petshopNotificationRoutes);
 app.use("/api/sidebar-config", sidebarConfigRoutes);
+app.use("/api/shot-reminders", shotReminderRoutes);
 
 // 404 handler
 app.use((req, res) => {

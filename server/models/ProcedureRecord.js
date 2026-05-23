@@ -21,6 +21,9 @@ const procedureRecordSchema = new mongoose.Schema({
   grandTotal: { type: Number, required: true, min: 0 },
   receivedAmount: { type: Number, default: 0, min: 0 },
   receivable: { type: Number, default: 0, min: 0 },
+  discount: { type: Number, default: 0 },
+  discountType: { type: String, enum: ['PKR', '%'], default: 'PKR' },
+  discountValue: { type: Number, default: 0 },
   notes:      { type: String, trim: true },
   createdBy:  { type: String, trim: true, default: 'Reception' }
 }, {

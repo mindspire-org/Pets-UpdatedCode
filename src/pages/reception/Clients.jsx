@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { FiSearch, FiUsers, FiDollarSign, FiHeart, FiPhone, FiMail, FiMapPin, FiCalendar, FiEye, FiEdit, FiUpload } from 'react-icons/fi'
-import { petsAPI, pharmacyDuesAPI, pharmacySalesAPI, proceduresAPI, appointmentsAPI, fullRecordAPI, financialSummaryAPI } from '../../services/api'
+import { petsAPI, pharmacyDuesAPI, pharmacySalesAPI, proceduresAPI, appointmentsAPI, fullRecordAPI, financialSummaryAPI, financialsAPI } from '../../services/api'
 import DateRangePicker from '../../components/DateRangePicker'
 import * as XLSX from 'xlsx'
 
@@ -15,6 +15,7 @@ export default function ReceptionClients() {
   const [fullRecord, setFullRecord] = useState(null)
   const [clientDues, setClientDues] = useState({})
   const [clientPayments, setClientPayments] = useState({})
+  const [clientDiscounts, setClientDiscounts] = useState({})
   const [clientSales, setClientSales] = useState([])
   const [clientProcedures, setClientProcedures] = useState([])
   const [lastPayment, setLastPayment] = useState(null)
@@ -44,7 +45,7 @@ export default function ReceptionClients() {
   const toNum = (v) => {
     if (v == null) return 0
     const n = typeof v === 'string' ? Number(v.replace(/,/g, '')) : Number(v)
-    return Number.isNaN(n) ? 0 : n
+    return Number.isNaN(n) ? 0 : Math.round(n * 100) / 100
   }
 
   useEffect(() => {
@@ -332,6 +333,7 @@ export default function ReceptionClients() {
   const loadClientFinancials = async (clientsList) => {
     const duesMap = {}
     const paymentsMap = {}
+    const discountsMap = {}
 
     // Fetch once for efficiency
     let allSales = []
@@ -339,17 +341,20 @@ export default function ReceptionClients() {
     let allDues = []
     let allAppointments = []
     let allPets = []
+    let allFinancials = []
     try { const salesRes = await pharmacySalesAPI.getAll(); allSales = salesRes.data || [] } catch {}
     try { const procsRes = await proceduresAPI.getAll('?includeImported=true'); allProcedures = procsRes.data || [] } catch {}
     try { const duesRes = await pharmacyDuesAPI.getAll(); allDues = duesRes.data || [] } catch {}
     try { const apptsRes = await appointmentsAPI.getAll(); allAppointments = apptsRes.data || [] } catch {}
     try { const petsRes = await petsAPI.getAll(); allPets = petsRes.data || [] } catch {}
+    try { const finRes = await financialsAPI.getAll(); allFinancials = finRes.data || [] } catch {}
     
     console.log('Financial data loaded:', { 
       sales: allSales.length, 
       procedures: allProcedures.length, 
       appointments: allAppointments.length,
-      pets: allPets.length
+      pets: allPets.length,
+      financials: allFinancials.length
     })
     
     // Build pet lookup map for clientId resolution
@@ -400,80 +405,156 @@ export default function ReceptionClients() {
       acc[cid] = row
       return acc
     }, {})
+    const petsByClient = allPets.reduce((acc, pet) => {
+      const cid = (pet.clientId || pet.details?.owner?.clientId || '').trim()
+      if (!cid) return acc
+      if (!acc[cid]) acc[cid] = []
+      acc[cid].push(pet)
+      return acc
+    }, {})
+    
+    // Build financial records index for consultation fees (to avoid double-counting)
+    const consultFinancialsByClient = allFinancials.reduce((acc, f) => {
+      if (f.type === 'Income' && String(f.category || '').toLowerCase().includes('consult')) {
+        const cid = petToClientMap[f.petId] || ''
+        if (cid) {
+          if (!acc[cid]) acc[cid] = []
+          acc[cid].push(f)
+        }
+      }
+      return acc
+    }, {})
 
     // IMPORTANT: do not call per-client APIs here (will exhaust resources on large datasets).
     // Compute dues + total paid from already fetched sales/procedures data.
+    // This calculation now matches the Pet-wise Financial Breakdown logic exactly.
     for (const client of (clientsList || [])) {
       const cid = (client.clientId || '').trim()
       if (!cid) continue
 
-      let due = 0
-      const sales = (salesByClient[cid] || []).slice().sort((a,b)=> new Date(b.createdAt||0) - new Date(a.createdAt||0))
-      const procs = (procsByClient[cid] || []).slice().sort((a,b)=> new Date(b.createdAt||0) - new Date(a.createdAt||0))
-      const appts = (apptsByClient[cid] || []).slice().sort((a,b)=> new Date(b.createdAt||0) - new Date(a.createdAt||0))
+      const sales = (salesByClient[cid] || [])
+      const procs = (procsByClient[cid] || [])
+      const appts = (apptsByClient[cid] || [])
       const dueRow = duesByClient[cid]
-      const latestSale = sales[0]
-      const latestProc = procs[0]
-      const latestAppt = appts[0]
-      const latestSaleTs = latestSale ? new Date(latestSale.createdAt||0).getTime() : 0
-      const latestProcTs = latestProc ? new Date(latestProc.createdAt||0).getTime() : 0
-      const latestApptTs = latestAppt ? new Date(latestAppt.createdAt||0).getTime() : 0
+      const pets = (petsByClient[cid] || [])
+      const consultFinancials = (consultFinancialsByClient[cid] || [])
 
-      // Find the most recent transaction to get current dues
-      const maxTs = Math.max(latestSaleTs, latestProcTs, latestApptTs)
+      // Calculate pending amounts for each module (matching Pet-wise Financial Breakdown logic)
       
-      if (maxTs === latestSaleTs && latestSale) {
-        const subtotal = toNum(latestSale.subtotal)
-        const discount = toNum(latestSale.discount)
-        const grand = toNum(latestSale.totalAmount ?? (subtotal - discount))
-        const recv = toNum((latestSale.receivedAmount!=null? latestSale.receivedAmount : grand))
-        const prev = toNum(latestSale.previousDue)
-        const calcDue = Math.max(0, prev + (grand - recv))
-        due = toNum(latestSale.newTotalDue!=null ? latestSale.newTotalDue : calcDue)
-      } else if (maxTs === latestProcTs && latestProc) {
-        const gt = toNum(latestProc.grandTotal ?? (toNum(latestProc.subtotal) + toNum(latestProc.previousDues)))
-        const recv = (latestProc.receivedAmount!=null)
-          ? toNum(latestProc.receivedAmount)
-          : (latestProc.receivable!=null ? Math.max(0, gt - toNum(latestProc.receivable)) : 0)
-        const calcDue = Math.max(0, gt - recv)
-        due = toNum(latestProc.receivable!=null ? latestProc.receivable : calcDue)
-      } else if (maxTs === latestApptTs && latestAppt) {
-        // Calculate dues from appointment
-        due = Math.max(0, toNum(latestAppt.remainingAmount || latestAppt.currentDues))
-      }
+      // 1. Pharmacy pending
+      const pharmacyPending = sales.reduce((sum, s) => {
+        const billed = toNum(s.totalAmount ?? (toNum(s.subtotal) - toNum(s.discount)))
+        const received = toNum(s.receivedAmount != null ? s.receivedAmount : billed)
+        return sum + Math.max(0, billed - received)
+      }, 0)
 
+      // 2. Procedures pending (excluding imported opening balances)
+      const proceduresPending = procs.reduce((sum, p) => {
+        // Skip imported opening balances (they're handled separately)
+        const isImported = String(p?.createdBy || '').toLowerCase() === 'import' ||
+                          String(p?.notes || '').toLowerCase().includes('import') ||
+                          (Array.isArray(p?.procedures) && p.procedures.some(it => 
+                            String(it?.mainCategory || '').toLowerCase() === 'imported' ||
+                            String(it?.subCategory || '').toLowerCase() === 'opening'
+                          ))
+        if (isImported) return sum
+
+        const gt = toNum(p.grandTotal ?? (toNum(p.subtotal) + toNum(p.previousDues)))
+        const recv = (p.receivedAmount != null) ? toNum(p.receivedAmount) : 
+                     (p.receivable != null ? Math.max(0, gt - toNum(p.receivable)) : 0)
+        const due = (p.receivable != null) ? toNum(p.receivable) : Math.max(0, gt - recv)
+        return sum + due
+      }, 0)
+
+      // 3. Appointments pending
+      const appointmentsPending = appts.reduce((sum, a) => {
+        return sum + Math.max(0, toNum(a.remainingAmount || a.currentDues))
+      }, 0)
+
+      // 4. Consultant fees pending (from pet registrations) - AVOID DOUBLE-COUNTING
+      // Track which pets already have consultation fees recorded in Financial records
+      const consultPaidByPet = new Set()
+      consultFinancials.forEach(f => {
+        if (f.petId) consultPaidByPet.add(String(f.petId).trim())
+      })
+      
+      const consultantPending = pets.reduce((sum, pet) => {
+        const petId = String(pet.id || pet._id || '').trim()
+        // Only count pet registration fees if this pet doesn't have a Financial record for consultation
+        if (!consultPaidByPet.has(petId)) {
+          const fee = toNum(pet.details?.clinic?.consultantFees)
+          const received = toNum(pet.details?.clinic?.receivedAmount)
+          return sum + Math.max(0, fee - received)
+        }
+        return sum
+      }, 0)
+
+      // 5. Previous dues from PharmacyDue table (opening balances)
+      // NOTE: This should NOT include consultation fees as they're handled separately in consultantPending
       const storedDue = toNum(dueRow?.previousDue)
-      duesMap[cid] = storedDue > 0 ? storedDue : (Number(due) || 0)
 
-      const totalSalesPaid = (salesByClient[cid]||[]).reduce((sum, s)=> sum + Math.max(0, toNum((s.receivedAmount!=null? s.receivedAmount : s.totalAmount))), 0)
-      const totalProcPaid = (procsByClient[cid]||[]).reduce((sum, p)=> sum + Math.max(0, toNum(p.receivedAmount)), 0)
-      const totalApptPaid = (apptsByClient[cid]||[]).reduce((sum, a)=> sum + Math.max(0, toNum(a.amountPaid)), 0)
+      // Total current dues = sum of all module pending amounts
+      // Do NOT add storedDue here as it may contain consultation fees that are already counted in consultantPending
+      const totalCurrentDues = pharmacyPending + proceduresPending + appointmentsPending + consultantPending
+
+      duesMap[cid] = totalCurrentDues
+
+      // Calculate total payments (matching Pet-wise Financial Breakdown logic)
+      const totalSalesPaid = sales.reduce((sum, s) => sum + toNum(s.receivedAmount != null ? s.receivedAmount : s.totalAmount), 0)
+      const totalProcPaid = procs.reduce((sum, p) => sum + toNum(p.receivedAmount), 0)
+      const totalApptPaid = appts.reduce((sum, a) => sum + toNum(a.amountPaid), 0)
+      const totalRegPaid = pets.reduce((sum, pet) => sum + toNum(pet.details?.clinic?.receivedAmount), 0)
+      const totalConsultPaid = consultFinancials.reduce((sum, f) => sum + toNum(f.amount), 0)
+      const totalRegDiscount = pets.reduce((sum, pet) => {
+        const fee = toNum(pet.details?.clinic?.consultantFees)
+        const dType = pet.details?.clinic?.discountType || 'PKR'
+        const dVal = toNum(pet.details?.clinic?.discount)
+        if (dType === '%') return sum + (fee * dVal / 100)
+        return sum + dVal
+      }, 0)
+      const totalSalesDiscount = sales.reduce((sum, s) => sum + toNum(s.discount || 0), 0)
+      const totalProcDiscount = procs.reduce((sum, p) => sum + toNum(p.discount || 0), 0)
+      const totalApptDiscount = appts.reduce((sum, a) => sum + toNum(a.discount || 0), 0)
+
       const storedPaid = toNum(dueRow?.totalPaid)
-      paymentsMap[cid] = storedPaid + totalSalesPaid + totalProcPaid + totalApptPaid
+
+      paymentsMap[cid] = storedPaid + totalSalesPaid + totalProcPaid + totalApptPaid + totalRegPaid + totalConsultPaid
+      discountsMap[cid] = totalRegDiscount + totalSalesDiscount + totalProcDiscount + totalApptDiscount
       
-      // Debug logging for first few clients
-      if (Object.keys(paymentsMap).length <= 3) {
-        console.log(`Client ${cid} financial summary:`, {
-          sales: totalSalesPaid,
-          procedures: totalProcPaid,
-          appointments: totalApptPaid,
-          appointmentCount: (apptsByClient[cid]||[]).length,
-          appointmentDetails: (apptsByClient[cid]||[]).map(a => ({ 
-            id: a.id || a._id, 
-            petName: a.petName, 
-            doctorFee: a.doctorFee, 
-            amountPaid: a.amountPaid,
-            remainingAmount: a.remainingAmount
+      // Debug logging for first few clients OR specific problematic client
+      if (Object.keys(paymentsMap).length <= 3 || cid === 'CL-177763154920634567891') {
+        console.log(`Client ${cid} financial summary (fixed consultation double-counting v2):`, {
+          pharmacyPending,
+          proceduresPending,
+          appointmentsPending,
+          consultantPending,
+          storedDue: storedDue, // Not included in totalCurrentDues to avoid double-counting
+          totalCurrentDues,
+          consultPaidByPet: Array.from(consultPaidByPet),
+          consultFinancials: consultFinancials.length,
+          petDetails: pets.map(pet => ({
+            petId: pet.id || pet._id,
+            petName: pet.petName,
+            consultantFees: pet.details?.clinic?.consultantFees,
+            receivedAmount: pet.details?.clinic?.receivedAmount,
+            calculated: toNum(pet.details?.clinic?.consultantFees) - toNum(pet.details?.clinic?.receivedAmount)
           })),
-          stored: storedPaid,
-          total: paymentsMap[cid],
-          currentDue: due
+          breakdown: {
+            sales: totalSalesPaid,
+            procedures: totalProcPaid,
+            appointments: totalApptPaid,
+            registrationPaid: totalRegPaid,
+            consultationPaid: totalConsultPaid,
+            stored: storedPaid,
+            total: paymentsMap[cid]
+          }
         })
       }
     }
 
     setClientDues(duesMap)
     setClientPayments(paymentsMap)
+    setClientDiscounts(discountsMap)
   }
 
   const isDateInRange = (dateStr) => {
@@ -529,8 +610,11 @@ export default function ReceptionClients() {
     const totalPaid = Object.entries(clientPayments)
       .filter(([clientId]) => filteredClientIds.includes((clientId || '').trim()))
       .reduce((sum, [, payment]) => sum + (payment || 0), 0)
-    return { totalClients, totalPets, totalDues, totalPaid }
-  }, [filteredClients, clientDues, clientPayments])
+    const totalDiscount = Object.entries(clientDiscounts)
+      .filter(([clientId]) => filteredClientIds.includes((clientId || '').trim()))
+      .reduce((sum, [, discount]) => sum + (discount || 0), 0)
+    return { totalClients, totalPets, totalDues, totalPaid, totalDiscount }
+  }, [filteredClients, clientDues, clientPayments, clientDiscounts])
 
   const loadClientModalData = async (client) => {
     setFullRecord(null)
@@ -997,6 +1081,18 @@ export default function ReceptionClients() {
             </div>
           </div>
         </div>
+
+        <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50 rounded-xl p-6 border border-purple-200 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-purple-500 rounded-xl flex items-center justify-center">
+              <FiDollarSign className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-slate-800">Rs. {totalStats.totalDiscount.toLocaleString()}</div>
+              <div className="text-sm text-slate-600">Total Discount</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Search */}
@@ -1073,6 +1169,7 @@ export default function ReceptionClients() {
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-600 uppercase">Pets</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-600 uppercase">Current Due</th>
                   <th className="px-6 py-4 text-right text-xs font-semibold text-slate-600 uppercase">Total Paid</th>
+                  <th className="px-6 py-4 text-right text-xs font-semibold text-slate-600 uppercase">Total Discount</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-600 uppercase">Last Visit</th>
                   <th className="px-6 py-4 text-center text-xs font-semibold text-slate-600 uppercase">Actions</th>
                 </tr>
@@ -1117,6 +1214,11 @@ export default function ReceptionClients() {
                     <td className="px-6 py-4 text-right">
                       <span className="font-semibold text-green-600">
                         Rs. {(clientPayments[client.clientId] || 0).toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <span className="font-semibold text-purple-600">
+                        Rs. {(clientDiscounts[client.clientId] || 0).toLocaleString()}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center text-sm text-slate-600">
@@ -1172,20 +1274,25 @@ export default function ReceptionClients() {
                     <div className="text-xs text-slate-600">Paid: Rs. {Number(fullRecord.totals.pharmacyPaid||0).toLocaleString()} | Due: Rs. {Number(fullRecord.totals.pharmacyDue||0).toLocaleString()}</div>
                   </div>
                   <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
-                    <div className="text-slate-600 text-sm">Consultation Fees</div>
-                    <div className="text-2xl font-bold text-amber-700">Rs. {(() => {
-                      try {
-                        const moduleAmt = Number(((finSummary && finSummary.modules && finSummary.modules.consultant && finSummary.modules.consultant.amount) || 0))
-                        const petsAmt = Array.isArray(finSummary?.pets) ? finSummary.pets.reduce((s,p)=> s + Number(p?.modules?.consultant?.amount || 0), 0) : 0
-                        const entriesAmt = Array.isArray(finSummary?.entries) 
-                          ? finSummary.entries.filter(e => String(e.type||'').toLowerCase().includes('consult'))
-                              .reduce((s,e)=> s + Number(e?.received || 0), 0)
-                          : 0
-                        const frAmt = Number(fullRecord?.totals?.consultationFees || 0)
-                        const val = entriesAmt || moduleAmt || petsAmt || frAmt
-                        return Number(val || 0).toLocaleString()
-                      } catch { return '0' }
-                    })()}</div>
+                    {(() => {
+                      const latestPet = Array.isArray(fullRecord?.pets) && fullRecord.pets.length > 0 ? fullRecord.pets[0]?.pet : null
+                      const fee = (() => {
+                        const n = parseFloat(latestPet?.details?.clinic?.consultantFees)
+                        return Number.isFinite(n) ? n : 0
+                      })()
+                      const received = (() => {
+                        const n = parseFloat(latestPet?.details?.clinic?.receivedAmount)
+                        return Number.isFinite(n) ? n : 0
+                      })()
+                      const dues = Math.max(0, fee - received)
+                      return (
+                        <>
+                          <div className="text-slate-600 text-sm">Consultant Fees</div>
+                          <div className="text-2xl font-bold text-amber-700">Rs. {fee.toFixed(2)}</div>
+                          <div className="text-xs text-slate-700 mt-1">Received: {Math.round(received)} | Dues: {Math.round(dues)}</div>
+                        </>
+                      )
+                    })()}
                   </div>
                 </div>
               )}
@@ -1193,7 +1300,7 @@ export default function ReceptionClients() {
               {/* All Modules Financial Summary (Unified) */}
               {finSummary && finSummary.totals && (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div>
                       <div className="text-slate-600 text-xs">Total Billed</div>
                       <div className="text-lg font-bold text-slate-800">Rs. {Number(finSummary.totals.totalBilled||0).toLocaleString()}</div>
@@ -1201,10 +1308,6 @@ export default function ReceptionClients() {
                     <div>
                       <div className="text-slate-600 text-xs">Total Received</div>
                       <div className="text-lg font-bold text-green-700">Rs. {Number(finSummary.totals.totalReceived||0).toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-600 text-xs">Total Receivable (Balance)</div>
-                      <div className="text-lg font-bold text-amber-700">Rs. {Number(finSummary.totals.totalPending||0).toLocaleString()}</div>
                     </div>
                     <div>
                       <div className="text-slate-600 text-xs">Current Due</div>
@@ -1224,14 +1327,24 @@ export default function ReceptionClients() {
                     {fullRecord.pets.map((entry, idx) => {
                       const pid = String(entry?.pet?.id || entry?.pet?.petId || '').trim()
                       const it = Array.isArray(finSummary?.pets) ? finSummary.pets.find(p => String(p.petId||'').trim() === pid) : null
-                      const paid = !!(it && it.modules && it.modules.consultant && it.modules.consultant.paid)
-                      const amt = Number(it?.modules?.consultant?.amount || 0)
+                      const fee = (() => {
+                        const n = parseFloat(entry?.pet?.details?.clinic?.consultantFees)
+                        return Number.isFinite(n) ? n : 0
+                      })()
+                      const received = (() => {
+                        const n = parseFloat(entry?.pet?.details?.clinic?.receivedAmount)
+                        return Number.isFinite(n) ? n : 0
+                      })()
+                      const dues = Math.max(0, fee - received)
+                      const paid = fee > 0 ? dues <= 0 : !!(it && it.modules && it.modules.consultant && it.modules.consultant.paid)
                       return (
                         <div key={idx} className="border border-slate-200 rounded-xl p-4 bg-slate-50">
                           <div className="font-bold text-slate-800 mb-2 flex items-center gap-2">
                             <span>{entry.pet?.petName} <span className="text-slate-500 font-normal">(ID: {entry.pet?.id})</span></span>
                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${paid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                              {paid ? `Consultant Paid • Rs. ${amt.toLocaleString()}` : 'Consultant Pending'}
+                              {fee > 0
+                                ? (paid ? `Consultant Paid • Rs. ${Math.round(received).toLocaleString()}` : `Consultant Due • Rs. ${Math.round(dues).toLocaleString()}`)
+                                : (paid ? `Consultant Paid • Rs. ${Number(it?.modules?.consultant?.amount || 0).toLocaleString()}` : 'Consultant Pending')}
                             </span>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -1363,7 +1476,7 @@ export default function ReceptionClients() {
                         <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Date</th>
                         <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Items</th>
                         <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Received</th>
-                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Pending</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Dues</th>
                         <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Total</th>
                         <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600">Actions</th>
                       </tr>
@@ -1410,7 +1523,7 @@ export default function ReceptionClients() {
                           <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Pet Shop Due</th>
                           <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Consultant</th>
                           <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Total Received</th>
-                          <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Total Pending</th>
+                          <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Total Dues</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1421,7 +1534,15 @@ export default function ReceptionClients() {
                             <td className="px-3 py-2 text-right">{Number(p.modules?.lab?.pending||0).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right">{Number(p.modules?.procedures?.pending||0).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right">{Number(p.modules?.petShop?.pending||0).toLocaleString()}</td>
-                            <td className="px-3 py-2">{p.modules?.consultant?.paid ? `Paid ${Number(p.modules.consultant.amount||0).toLocaleString()}` : 'Pending'}</td>
+                            <td className="px-3 py-2">
+                              {(() => {
+                                const fee = Number(p.modules?.consultant?.amount || 0)
+                                const recv = Number(p.modules?.consultant?.received || 0)
+                                const due = Number(p.modules?.consultant?.pending || 0)
+                                if (!(fee > 0)) return '—'
+                                return `Fee ${fee.toLocaleString()} | Received ${recv.toLocaleString()} | Dues ${due.toLocaleString()}`
+                              })()}
+                            </td>
                             <td className="px-3 py-2 text-right">{Number(p.totals?.received||0).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right">{Number(p.totals?.pending||0).toLocaleString()}</td>
                           </tr>
@@ -1446,7 +1567,7 @@ export default function ReceptionClients() {
                         <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Procedure(s)</th>
                         <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Subtotal</th>
                         <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Received</th>
-                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Receivable</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Dues</th>
                         <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600">Actions</th>
                       </tr>
                     </thead>

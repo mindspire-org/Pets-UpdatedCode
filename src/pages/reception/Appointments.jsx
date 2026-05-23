@@ -14,6 +14,7 @@ export default function ReceptionAppointments(){
     petSpecies:'', 
     gender:'', 
     age:'', 
+    registrationDate: '',
     doctor:'', 
     date:'', 
     time:'', 
@@ -266,6 +267,7 @@ export default function ReceptionAppointments(){
           const contact = foundPet.ownerContact || foundPet.contact || foundPet?.details?.owner?.contact || ''
           const gender = foundPet.gender || foundPet?.details?.pet?.gender || ''
           const age = foundPet.age || foundPet?.details?.pet?.approxAge || foundPet?.details?.pet?.age || ''
+          const registrationDate = foundPet.details?.clinic?.dateOfRegistration || foundPet.createdAt || ''
           setForm(prev => ({
             ...prev,
             petName,
@@ -274,7 +276,8 @@ export default function ReceptionAppointments(){
             petType: resolvedType || '',
             petSpecies: resolvedSpecies || '',
             gender,
-            age
+            age,
+            registrationDate
           }))
         }
       } else {
@@ -287,7 +290,8 @@ export default function ReceptionAppointments(){
           petType: '',
           petSpecies: '',
           gender: '',
-          age: ''
+          age: '',
+          registrationDate: ''
         }))
       }
     }
@@ -308,6 +312,7 @@ export default function ReceptionAppointments(){
         const existingContact = existingPet.contact || existingPet.ownerContact || existingPet?.details?.owner?.contact
         const existingGender = existingPet.gender || existingPet?.details?.pet?.gender
         const existingAge = existingPet.age || existingPet?.details?.pet?.approxAge || existingPet?.details?.pet?.age
+        const existingRegDate = existingPet.details?.clinic?.dateOfRegistration || existingPet.createdAt || ''
         // If pet exists, fill the ID and other details
         setForm(prev => ({
           ...prev,
@@ -318,7 +323,8 @@ export default function ReceptionAppointments(){
           petType: resolvedType || prev.petType,
           petSpecies: resolvedSpecies || prev.petSpecies,
           gender: existingGender || prev.gender,
-          age: existingAge || prev.age
+          age: existingAge || prev.age,
+          registrationDate: existingRegDate || prev.registrationDate
         }))
       } else if (form.petName && form.ownerName && (name === 'petName' ? value : form.petName) && (name === 'ownerName' ? value : form.ownerName)) {
         // Generate new Pet ID for unregistered pet
@@ -397,6 +403,7 @@ export default function ReceptionAppointments(){
         petSpecies:'', 
         gender:'', 
         age:'', 
+        registrationDate: '',
         doctor:'', 
         date:'', 
         time:'', 
@@ -428,6 +435,7 @@ export default function ReceptionAppointments(){
       petSpecies: appointment.species || appointment.petSpecies || '',
       gender: appointment.gender || appointment.petGender || '',
       age: appointment.age || appointment.petAge || '',
+      registrationDate: appointment.registrationDate || '',
       doctor: appointment.doctor || '',
       date: appointment.date || '',
       time: appointment.time || '',
@@ -447,6 +455,7 @@ export default function ReceptionAppointments(){
       petSpecies:'', 
       gender:'', 
       age:'', 
+      registrationDate: '',
       doctor:'', 
       date:'', 
       time:'', 
@@ -640,6 +649,65 @@ export default function ReceptionAppointments(){
             <div className="text-sm text-slate-600">Total Appointments</div>
           </div>
         </div>
+
+        {form.registrationDate && (
+          <div className="mb-6 animate-in fade-in slide-in-from-top-4 duration-500">
+            <div className={`p-4 rounded-2xl border-2 flex flex-col md:flex-row items-center justify-between gap-4 ${
+              (() => {
+                const regDate = new Date(form.registrationDate)
+                const today = new Date()
+                const diffTime = Math.abs(today - regDate)
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+                return diffDays > 30 
+                  ? 'bg-red-50 border-red-200 text-red-800' 
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              })()
+            }`}>
+              <div className="flex items-center gap-4">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                  (() => {
+                    const regDate = new Date(form.registrationDate)
+                    const today = new Date()
+                    const diffTime = Math.abs(today - regDate)
+                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+                    return diffDays > 30 ? 'bg-red-500' : 'bg-emerald-500'
+                  })()
+                }`}>
+                  <FiInfo className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <div className="font-bold text-lg">Registration Info</div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm opacity-90">
+                    <span>Registered on: <b>{new Date(form.registrationDate).toLocaleDateString('en-PK', { day: 'numeric', month: 'long', year: 'numeric' })}</b></span>
+                    <span>Days elapsed: <b>{Math.floor(Math.abs(new Date() - new Date(form.registrationDate)) / (1000 * 60 * 60 * 24))} days</b></span>
+                  </div>
+                </div>
+              </div>
+
+              {(() => {
+                const regDate = new Date(form.registrationDate)
+                const today = new Date()
+                const diffTime = Math.abs(today - regDate)
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24))
+                if (diffDays > 30) {
+                  return (
+                    <div className="flex items-center gap-3 bg-red-100 px-4 py-2 rounded-xl border border-red-200">
+                      <FiDollarSign className="w-5 h-5 text-red-600" />
+                      <span className="font-bold">Consultation Fee Required (30+ days elapsed)</span>
+                    </div>
+                  )
+                } else {
+                  return (
+                    <div className="flex items-center gap-3 bg-emerald-100 px-4 py-2 rounded-xl border border-emerald-200">
+                      <FiCheckCircle className="w-5 h-5 text-emerald-600" />
+                      <span className="font-bold">Free Follow-up Period (within 30 days)</span>
+                    </div>
+                  )
+                }
+              })()}
+            </div>
+          </div>
+        )}
         
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
           <div className="bg-white/60 rounded-2xl p-4 text-center">

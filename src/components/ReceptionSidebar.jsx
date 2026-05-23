@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { FiGrid, FiUserPlus, FiCalendar, FiFileText, FiLogOut, FiClipboard, FiUsers, FiSettings } from 'react-icons/fi'
+import { FiGrid, FiUserPlus, FiCalendar, FiFileText, FiLogOut, FiClipboard, FiUsers, FiSettings, FiBell } from 'react-icons/fi'
 
 export default function ReceptionSidebar({ open = false, onClose = () => {}, collapsed = false }) {
   const navigate = useNavigate()
   const auth = JSON.parse(localStorage.getItem('reception_auth') || '{}')
-  
+  const role = auth.role?.toLowerCase()
+
   const linkClass = ({ isActive }) => `flex items-center gap-3 px-4 py-3 rounded-xl transition text-sm font-medium ${
     isActive ? 'bg-sky-600 text-white shadow' : 'text-slate-600 hover:bg-sky-50 hover:text-sky-700'
   }`
@@ -24,19 +25,23 @@ export default function ReceptionSidebar({ open = false, onClose = () => {}, col
       { to: "/reception/appointments", icon: FiCalendar, label: "Appointments", id: 'appointments' },
       { to: "/reception/visits", icon: FiFileText, label: "Visit Records", id: 'visits' },
       { to: "/reception/forms", icon: FiClipboard, label: "Medical Forms", id: 'forms' },
-      { to: "/reception/procedures", icon: FiClipboard, label: "Procedures", id: 'procedures' },
+      { to: "/reception/procedures", icon: FiClipboard, label: "Procedure Patients", id: 'procedures' },
+      { to: "/reception/procedure-catalog", icon: FiClipboard, label: "Procedure Catalog", id: 'procedure-catalog' },
+      { to: "/reception/procedure-patients", icon: FiUsers, label: "Procedure Profile", id: 'procedure-patients' },
+      { to: "/reception/shots-reminder", icon: FiBell, label: "Shots Reminder", id: 'shots-reminder' },
       { to: "/reception/settings", icon: FiSettings, label: "Settings", id: 'settings' },
     ]
 
     // If user is admin, show all
-    if (auth.role === 'admin' || auth.role === 'Admin') return allItems;
+    if (role === 'admin') return allItems;
 
     // Filter based on permissions
     const permissions = auth.sidebarPermissions?.reception;
-    if (!permissions) return allItems; // Default to show all if no permissions set
+    if (!Array.isArray(permissions)) return [];
 
-    return allItems.filter(item => permissions.includes(item.id));
-  }, [auth.role, auth.sidebarPermissions]);
+    // Always show Shots Reminder, Procedure Patients and Procedure Catalog (reception operational features)
+    return allItems.filter(item => ['shots-reminder', 'procedure-patients', 'procedure-catalog'].includes(item.id) || permissions.includes(item.id));
+  }, [role, auth.sidebarPermissions]);
 
   const Nav = (
     <nav className="space-y-1">

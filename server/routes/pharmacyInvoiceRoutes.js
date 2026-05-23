@@ -60,6 +60,7 @@ router.post("/", async (req, res) => {
     const medicineIds = [];
     for (const item of items) {
       const uPack = item.unitsPerPack || 1;
+      const qty = item.totalItems != null ? Number(item.totalItems) : (item.qtyPacks || 0) * uPack;
       const med = new PharmacyMedicine({
         medicineName:    item.medicineName,
         genericName:     item.genericName || "",
@@ -69,7 +70,7 @@ router.post("/", async (req, res) => {
         subCategory:     item.subCategory || "",
         category:        item.subCategory || item.mainCategory || "",
         expiryDate:      item.expiryDate || undefined,
-        quantity:        (item.qtyPacks || 0) * uPack,
+        quantity:        qty,
         unit:            item.unit || "pieces",
         containerType:   item.containerType || "",
         purchasePrice:   uPack > 0 ? +((item.buyPerPack || 0) / uPack).toFixed(4) : 0,
@@ -88,6 +89,7 @@ router.post("/", async (req, res) => {
         unitsPerPack:    uPack,
         buyPerPack:      item.buyPerPack || 0,
         salePerPack:     item.salePerPack || 0,
+        totalItems:      qty,
         companyId:       companyId || undefined,
         isActive:        true,
       });
@@ -106,13 +108,14 @@ router.post("/", async (req, res) => {
           const totalCost = items.reduce((s, it) => {
             const uPack = it.unitsPerPack || 1;
             const unitPrice = uPack > 0 ? (it.buyPerPack || 0) / uPack : 0;
-            return s + unitPrice * ((it.qtyPacks || 0) * uPack);
+            const qty = it.totalItems != null ? Number(it.totalItems) : (it.qtyPacks || 0) * uPack;
+            return s + unitPrice * qty;
           }, 0);
 
           for (const item of items) {
             const uPack = item.unitsPerPack || 1;
             const unitPrice = uPack > 0 ? (item.buyPerPack || 0) / uPack : 0;
-            const qty = (item.qtyPacks || 0) * uPack;
+            const qty = item.totalItems != null ? Number(item.totalItems) : (item.qtyPacks || 0) * uPack;
             sup.purchaseHistory.push({
               productName:   item.medicineName,
               quantity:      qty,

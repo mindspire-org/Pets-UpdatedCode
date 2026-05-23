@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { FiSearch, FiUserPlus, FiHeart, FiStar, FiActivity, FiCalendar, FiUser, FiShield, FiBell, FiUpload } from 'react-icons/fi'
+import { FiSearch, FiUserPlus, FiHeart, FiStar, FiActivity, FiCalendar, FiUser, FiShield, FiBell, FiUpload, FiPlus, FiTrash2 } from 'react-icons/fi'
 import { useActivity } from '../../context/ActivityContext'
 import { useSettings } from '../../context/SettingsContext'
 import { petsAPI, taxonomyAPI, doctorProfileAPI, pharmacySalesAPI, proceduresAPI, pharmacyDuesAPI, fullRecordAPI, financialSummaryAPI, backupAPI } from '../../services/api'
@@ -63,6 +63,25 @@ const calcDewormingNext = (dateStr, daysVal) => {
   } catch { return '' }
 }
 
+const calcDiscountAmount = (fee, discountValue, discountType) => {
+  const f = Number(fee || 0)
+  const v = Number(discountValue || 0)
+  if (!Number.isFinite(f) || f <= 0) return 0
+  if (!Number.isFinite(v) || v <= 0) return 0
+  if (discountType === '%') return Math.max(0, (f * v) / 100)
+  return Math.max(0, v)
+}
+
+const calcClinicBill = (fee, discountValue, discountType, paid) => {
+  const f = Number(fee || 0)
+  const p = Number(paid || 0)
+  const discount = calcDiscountAmount(f, discountValue, discountType)
+  const total = Math.max(0, f - discount)
+  const paidSafe = Math.max(0, Number.isFinite(p) ? p : 0)
+  const dues = Math.max(0, total - paidSafe)
+  return { fee: f, discount, total, paid: paidSafe, dues }
+}
+
 const toISODate = (value) => {
   if (!value) return ''
   if (typeof value === 'string') {
@@ -89,7 +108,7 @@ const formatLocalDate = (value) => {
 const toNum = (v) => {
   if (v == null) return 0
   const n = typeof v === 'string' ? Number(v.replace(/,/g, '')) : Number(v)
-  return Number.isNaN(n) ? 0 : n
+  return Number.isNaN(n) ? 0 : Math.round(n * 100) / 100
 }
 
 const calcAgeParts = (dobStr, refDate = new Date()) => {
@@ -215,7 +234,7 @@ export default function ReceptionPets(){
       { name: 'DHPP/L • FVRCP', dateGiven: '', nextDue: '', vet: '', shotStage: '' },
       { name: 'Others', dateGiven: '', nextDue: '', vet: '', shotStage: '' },
     ],
-    deworming: { name: 'Deworming', dateGiven: '', nextDue: '', vet: '', days: 90 },
+    deworming: [{ name: 'Deworming', dateGiven: '', nextDue: '', vet: '', days: 90 }],
     complaint: { visitType: 'Emergency', chiefComplaint: '' },
     clinic: {
       dateOfRegistration: new Date().toISOString().slice(0,10),
@@ -223,7 +242,11 @@ export default function ReceptionPets(){
       consultingVet: '',
       recordEntered: 'Yes',
       remarks: '',
-      consultantFees: ''
+      consultantFees: '',
+      paymentMethod: 'Cash',
+      receivedAmount: '',
+      discountType: 'PKR',
+      discount: ''
     },
     life: { dead: false, deathDate: '', deathNote: '' }
   }
@@ -290,7 +313,7 @@ export default function ReceptionPets(){
     try { return JSON.parse(localStorage.getItem('deworm_items')||'["Albendazole","Mebendazole","Pyrantel Pamoate","Fenbendazole","Ivermectin","Deworming"]') } catch { return ['Albendazole','Mebendazole','Pyrantel Pamoate','Fenbendazole','Ivermectin','Deworming'] }
   })
   const [openVaccIndex, setOpenVaccIndex] = useState(-1)
-  const [openDeworm, setOpenDeworm] = useState(false)
+  const [openDewormIndex, setOpenDewormIndex] = useState(-1)
   const [quickAdd, setQuickAdd] = useState({ open:false, type:'', value:'', targetIndex:-1 })
   const [manageVaccines, setManageVaccines] = useState({ open:false, items:[], newItem:'', error:'' })
   const [manageDeworm, setManageDeworm] = useState({ open:false, items:[], newItem:'', error:'' })
@@ -333,14 +356,17 @@ export default function ReceptionPets(){
     const target = tomorrow.toISOString().slice(0,10)
     const alerts = []
     rows.forEach(row => {
-      const dew = row?.details?.deworming
-      if (!dew) return
-      const due = toISODate(dew?.nextDue)
-      if (!due || due !== target) return
+      const raw = row?.details?.deworming
+      const list = Array.isArray(raw) ? raw : (raw ? [raw] : [])
+      if (!list.length) return
       const pid = row?.id || row?._id || row?.details?.pet?.petId
-      const key = `dew|${pid}|${due}`
-      if (dismissedAlerts.has(key)) return
-      alerts.push({ key, petId: pid, petName: row?.details?.pet?.petName || row?.petName || 'Unknown Pet', ownerName: row?.details?.owner?.fullName || row?.ownerName || '', itemName: dew?.name || 'Deworming', dueDate: due })
+      list.forEach((dew, idx) => {
+        const due = toISODate(dew?.nextDue)
+        if (!due || due !== target) return
+        const key = `dew|${pid}|${idx}|${due}`
+        if (dismissedAlerts.has(key)) return
+        alerts.push({ key, petId: pid, petName: row?.details?.pet?.petName || row?.petName || 'Unknown Pet', ownerName: row?.details?.owner?.fullName || row?.ownerName || '', itemName: dew?.name || 'Deworming', dueDate: due })
+      })
     })
     return alerts
   }, [rows, dismissedAlerts])
@@ -632,6 +658,29 @@ export default function ReceptionPets(){
       }
     } catch {}
   }, [form.clinic.consultingVet, doctors, mode])
+
+  // Auto-fill received amount when consultant fees change (default to full payment)
+  useEffect(() => {
+    try {
+      if (mode === 'view') return
+      const fees = Math.round(parseFloat(form?.clinic?.consultantFees || 0))
+      const currentReceived = Math.round(parseFloat(form?.clinic?.receivedAmount || 0))
+      
+      // Only auto-fill if received amount is empty or was previously equal to the old fees
+      if (fees > 0 && (currentReceived === 0 || !form?.clinic?.receivedAmount)) {
+        setForm(prev => ({ ...prev, clinic: { ...prev.clinic, receivedAmount: String(fees) } }))
+      }
+    } catch {}
+  }, [form.clinic.consultantFees, mode])
+
+  const clinicBill = useMemo(() => {
+    return calcClinicBill(
+      form?.clinic?.consultantFees,
+      form?.clinic?.discount,
+      form?.clinic?.discountType,
+      form?.clinic?.receivedAmount
+    )
+  }, [form?.clinic?.consultantFees, form?.clinic?.discount, form?.clinic?.discountType, form?.clinic?.receivedAmount])
 
   const loadDoctors = async () => {
     try {
@@ -1024,22 +1073,68 @@ export default function ReceptionPets(){
     })
   }
 
-  // Update Deworming record (independent from vaccination logic)
-  const updateDeworming = (field, value) => {
+  const addVaccineRow = () => {
+    if (mode === 'view') return
+    setForm(prev => ({
+      ...prev,
+      vaccines: [
+        ...(Array.isArray(prev.vaccines) ? prev.vaccines : []),
+        { name: '', dateGiven: '', nextDue: '', vet: '', shotStage: '' }
+      ]
+    }))
+  }
+
+  const deleteVaccineRow = (idx) => {
+    if (mode === 'view') return
     setForm(prev => {
-      const base = (prev.deworming || { name: 'Deworming', dateGiven: '', nextDue: '', vet: '', days: 90 })
+      const list = Array.isArray(prev.vaccines) ? prev.vaccines : []
+      if (list.length <= 1) return prev
+      const next = list.filter((_, i) => i !== idx)
+      return { ...prev, vaccines: next }
+    })
+    setOpenVaccIndex((current) => (current === idx ? -1 : current > idx ? current - 1 : current))
+  }
+
+  // Update Deworming record (independent from vaccination logic)
+  const updateDeworming = (idx, field, value) => {
+    setForm(prev => {
+      const list = Array.isArray(prev.deworming) ? [...prev.deworming] : (prev.deworming ? [{ ...prev.deworming }] : [])
+      const base = list[idx] || { name: 'Deworming', dateGiven: '', nextDue: '', vet: '', days: 90 }
       const next = { ...base, [field]: value }
       if (field === 'days') {
         const d = Number(value)
-        next.days = Number.isFinite(d) && d>0 ? d : 90
+        next.days = Number.isFinite(d) && d > 0 ? d : 90
         if (next.dateGiven) next.nextDue = calcDewormingNext(next.dateGiven, next.days)
       }
       if (field === 'dateGiven') {
         next.nextDue = calcDewormingNext(value, next.days)
       }
       if (field === 'name') { ensureDewormItem(value) }
+      list[idx] = next
+      return { ...prev, deworming: list }
+    })
+  }
+
+  const addDewormRow = () => {
+    if (mode === 'view') return
+    setForm(prev => ({
+      ...prev,
+      deworming: [
+        ...(Array.isArray(prev.deworming) ? prev.deworming : (prev.deworming ? [prev.deworming] : [])),
+        { name: 'Deworming', dateGiven: '', nextDue: '', vet: '', days: 90 }
+      ]
+    }))
+  }
+
+  const deleteDewormRow = (idx) => {
+    if (mode === 'view') return
+    setForm(prev => {
+      const list = Array.isArray(prev.deworming) ? prev.deworming : (prev.deworming ? [prev.deworming] : [])
+      if (list.length <= 1) return prev
+      const next = list.filter((_, i) => i !== idx)
       return { ...prev, deworming: next }
     })
+    setOpenDewormIndex((current) => (current === idx ? -1 : current > idx ? current - 1 : current))
   }
 
   const openManageVaccines = () => setManageVaccines({ open:true, items:[...vaccineItems], newItem:'', error:'' })
@@ -1055,7 +1150,7 @@ export default function ReceptionPets(){
   const saveManageVaccines = () => { saveVaccineItems(manageVaccines.items); closeManageVaccines() }
   const saveManageDeworm = () => { saveDewormItems(manageDeworm.items); closeManageDeworm() }
   const handleVaccineSelect = (idx, value) => { if (value==='__add_vaccine__'){ openManageVaccines(); return } updateVaccine(idx,'name', value) }
-  const handleDewormSelect = (value) => { if (value==='__add_deworm__'){ openManageDeworm(); return } updateDeworming('name', value) }
+  const handleDewormSelect = (idx, value) => { if (value==='__add_deworm__'){ openManageDeworm(); return } updateDeworming(idx, 'name', value) }
 
   // Sync lists from DB settings when available
   useEffect(() => {
@@ -1082,8 +1177,8 @@ export default function ReceptionPets(){
       setOpenVaccIndex(-1)
     } else if (quickAdd.type === 'deworm') {
       await saveDewormItems([ ...dewormItems, name ])
-      updateDeworming('name', name)
-      setOpenDeworm(false)
+      if (quickAdd.targetIndex >= 0) updateDeworming(quickAdd.targetIndex, 'name', name)
+      setOpenDewormIndex(-1)
     }
     setQuickAdd({ open:false, type:'', value:'', targetIndex:-1 })
   }
@@ -1272,7 +1367,11 @@ export default function ReceptionPets(){
             registeredBy: form.clinic.registeredBy,
             consultingVet: form.clinic.consultingVet,
             remarks: form.clinic.remarks,
-            consultantFees: form.clinic.consultantFees
+            consultantFees: form.clinic.consultantFees,
+            paymentMethod: form.clinic.paymentMethod,
+            receivedAmount: form.clinic.receivedAmount,
+            discountType: form.clinic.discountType,
+            discount: form.clinic.discount
           },
           life: {
             dead: !!form?.life?.dead,
@@ -1323,6 +1422,78 @@ export default function ReceptionPets(){
         if (cidNow) await loadClientPayments(cidNow, pidNow)
       }
     } catch {}
+      
+      // Update client dues for consultation fees
+      try {
+        const bill = calcClinicBill(
+          parseFloat(form.clinic.consultantFees || 0),
+          parseFloat(form.clinic.discount || 0),
+          form.clinic.discountType,
+          parseFloat(form.clinic.receivedAmount || 0)
+        )
+        const consultantFees = Math.round(bill.fee)
+        const receivedAmount = Math.round(bill.paid)
+        const dueAmount = Math.round(bill.dues)
+        
+        if (mode === 'edit' && currentId) {
+          // For edit mode, we need to handle changes in consultation fees
+          // Get the original pet data to compare fees
+          const originalPet = rows.find(r => (r.id === currentId || r._id === currentId))
+          const originalClinic = originalPet?.details?.clinic || {}
+          const originalBill = calcClinicBill(
+            parseFloat(originalClinic?.consultantFees || 0),
+            parseFloat(originalClinic?.discount || 0),
+            originalClinic?.discountType,
+            parseFloat(originalClinic?.receivedAmount || 0)
+          )
+          const originalDue = Math.round(originalBill.dues)
+          
+          // Calculate the difference in dues
+          const dueDifference = dueAmount - originalDue
+          
+          if (dueDifference !== 0) {
+            // Get existing dues
+            let existingDue = 0
+            try {
+              const existingDueResponse = await pharmacyDuesAPI.getByClient(clientId)
+              existingDue = Math.round(parseFloat(existingDueResponse.data?.previousDue || 0))
+            } catch (err) {
+               existingDue = 0
+            }
+            
+            // Adjust dues by the difference
+            const totalDue = Math.max(0, existingDue + dueDifference)
+            
+            await pharmacyDuesAPI.upsert(clientId, {
+              previousDue: totalDue,
+              name: owner.fullName,
+              customerContact: owner.contact,
+            })
+          }
+        } else if (consultantFees > 0) {
+          // For create mode, add consultation fee due to existing dues
+          let existingDue = 0
+          try {
+            const existingDueResponse = await pharmacyDuesAPI.getByClient(clientId)
+            existingDue = Math.round(parseFloat(existingDueResponse.data?.previousDue || 0))
+          } catch (err) {
+            // Client doesn't exist in dues table yet, that's fine
+            existingDue = 0
+          }
+          
+          // Add consultation fee due to existing dues
+          const totalDue = existingDue + dueAmount
+          
+          // Update pharmacy dues with the total due amount
+          await pharmacyDuesAPI.upsert(clientId, {
+            previousDue: totalDue,
+            name: owner.fullName,
+            customerContact: owner.contact,
+          })
+        }
+      } catch (err) {
+        console.error('Error updating client dues for consultation fees:', err)
+      }
       
       try {
         const wasPaidBefore = !!paymentSummary?.consultant?.paidBefore
@@ -1852,6 +2023,24 @@ export default function ReceptionPets(){
       const pick = [n1, n2, n3].find(x => !isNaN(x) && x > 0)
       return pick || 0
     })()
+    const receivedAmountNum = (() => {
+      const v = (d.clinic && d.clinic.receivedAmount)
+      const n1 = v != null ? parseFloat(v) : NaN
+      const n2 = parseFloat(recRow?.details?.clinic?.receivedAmount)
+      const n3 = parseFloat(recRow?.receivedAmount)
+      const pick = [n1, n2, n3].find(x => !isNaN(x) && x >= 0)
+      return pick || 0
+    })()
+    const discountType = (d.clinic && d.clinic.discountType) || recRow?.details?.clinic?.discountType || 'PKR'
+    const discountRaw = (d.clinic && d.clinic.discount)
+    const discountNum = (() => {
+      const n1 = discountRaw != null ? parseFloat(discountRaw) : NaN
+      const n2 = parseFloat(recRow?.details?.clinic?.discount)
+      const pick = [n1, n2].find(x => !isNaN(x) && x >= 0)
+      return pick || 0
+    })()
+    const printedBill = calcClinicBill(consultantFeeNum, discountNum, discountType, receivedAmountNum)
+    const dueAmount = Math.max(0, printedBill.dues)
     
     const isBlankCore = [ownerName, ownerId, petName, petId].every(v => !v || v === '-')
     if (isBlankCore) { setReceiptOpen(false); return }
@@ -1899,7 +2088,13 @@ export default function ReceptionPets(){
       <div class="row"><span class="label">Consulting Vet</span><span class="value">${consultingVet}</span></div>
       <div class="divider"></div>
       ${consultantFeeNum > 0 ? `
-        <div class="row totals"><span class="label">Consultant Fees</span><span class="value">Rs. ${consultantFeeNum.toFixed(2)}</span></div>
+        <div class="center" style="font-weight:700;margin-top:2px;">Consultant Fees</div>
+        <div class="center totals" style="margin-top:2px;">Rs. ${printedBill.fee.toFixed(2)}</div>
+        <div class="divider"></div>
+        <div class="row"><span class="label">Discount:</span><span class="value">${(discountType==='%' ? (discountNum.toFixed(0) + '% (' + printedBill.discount.toFixed(0) + ')') : ('Rs. ' + printedBill.discount.toFixed(0)))}</span></div>
+        <div class="row"><span class="label">Total:</span><span class="value">${printedBill.total.toFixed(0)}</span></div>
+        <div class="row"><span class="label">Paid:</span><span class="value">${printedBill.paid.toFixed(0)}</span></div>
+        <div class="row"><span class="label">Dues:</span><span class="value">${printedBill.dues.toFixed(0)}</span></div>
       ` : ''}
       <div class="divider"></div>
       <div class="center" style="font-size:10px;margin-top:6px;">Thank you for visiting ${hospital.name}</div>
@@ -1970,9 +2165,9 @@ export default function ReceptionPets(){
       },
       medical: d.medical || initialForm.medical,
       vaccines: Array.isArray(d.vaccines) ? d.vaccines : initialForm.vaccines,
-      deworming: d.deworming || initialForm.deworming,
+      deworming: Array.isArray(d.deworming) ? d.deworming : (d.deworming ? [d.deworming] : initialForm.deworming),
       complaint: d.complaint || initialForm.complaint,
-      clinic: d.clinic || initialForm.clinic,
+      clinic: { ...initialForm.clinic, ...(d.clinic || {}) },
       life: d.life || {
         dead: (row.status==='Expired' || row.status==='Deceased'),
         deathDate: row.dateOfDeath || d.life?.deathDate || '',
@@ -2009,9 +2204,9 @@ export default function ReceptionPets(){
       },
       medical: d.medical || initialForm.medical,
       vaccines: Array.isArray(d.vaccines) ? d.vaccines : initialForm.vaccines,
-      deworming: d.deworming || initialForm.deworming,
+      deworming: Array.isArray(d.deworming) ? d.deworming : (d.deworming ? [d.deworming] : initialForm.deworming),
       complaint: d.complaint || initialForm.complaint,
-      clinic: d.clinic || initialForm.clinic,
+      clinic: { ...initialForm.clinic, ...(d.clinic || {}) },
       life: d.life || {
         dead: (row.status==='Expired' || row.status==='Deceased'),
         deathDate: row.dateOfDeath || d.life?.deathDate || '',
@@ -2942,8 +3137,20 @@ export default function ReceptionPets(){
 
           {/* 4. Vaccination Record */}
           <section className="rounded-xl p-4 bg-gradient-to-br from-emerald-50 to-white ring-1 ring-emerald-200/70">
-            <div className="font-semibold text-slate-800 mb-3">Vaccination Record (if available)</div>
-            <div className="grid grid-cols-1 gap-3">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="font-semibold text-slate-800">Vaccination Record (if available)</div>
+              {mode !== 'view' && (
+                <button
+                  type="button"
+                  onClick={addVaccineRow}
+                  className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+                  title="Add row"
+                >
+                  <FiPlus className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="space-y-3">
               {form.vaccines.map((v, idx) => (
                 <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                   <div>
@@ -2977,14 +3184,27 @@ export default function ReceptionPets(){
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Shot Stage</label>
-                    <select value={v.shotStage} onChange={e=>updateVaccine(idx,'shotStage',e.target.value)} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'}>
-                      <option value="">Shot Stage</option>
-                      <option>1st</option>
-                      <option>2nd</option>
-                      <option>3rd</option>
-                      <option>4th</option>
-                      <option>Annual</option>
-                    </select>
+                    <div className="flex items-center gap-2">
+                      <select value={v.shotStage} onChange={e=>updateVaccine(idx,'shotStage',e.target.value)} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'}>
+                        <option value="">Shot Stage</option>
+                        <option>1st</option>
+                        <option>2nd</option>
+                        <option>3rd</option>
+                        <option>4th</option>
+                        <option>Annual</option>
+                      </select>
+                      {mode !== 'view' && (
+                        <button
+                          type="button"
+                          onClick={() => deleteVaccineRow(idx)}
+                          className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+                          title="Delete row"
+                          disabled={form.vaccines.length <= 1}
+                        >
+                          <FiTrash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2994,41 +3214,70 @@ export default function ReceptionPets(){
 
           {/* Deworming (separate from Vaccination) */}
           <section className="rounded-xl p-4 bg-gradient-to-br from-lime-50 to-white ring-1 ring-lime-200/70">
-            <div className="font-semibold text-slate-800 mb-3">Deworming (if available)</div>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Deworming Name</label>
-                <div className="relative">
-                  <button type="button" onClick={()=>{ if(mode!=='view'){ setOpenDeworm(!openDeworm) } }} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-left">
-                    {form.deworming?.name || 'Deworming'}
-                  </button>
-                  {openDeworm && (
-                    <div className="absolute z-[60] mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-                      {Array.from(new Set([form.deworming?.name, ...dewormItems].filter(Boolean))).map(opt => (
-                        <div key={opt} onClick={()=>{ updateDeworming('name', opt); setOpenDeworm(false) }} className="px-3 py-2 hover:bg-slate-50 cursor-pointer">{opt}</div>
-                      ))}
-                      <div className="border-t border-slate-100"></div>
-                      <button type="button" onClick={()=>openQuickAdd('deworm')} className="w-full text-left px-3 py-2 text-indigo-600 hover:bg-indigo-50 cursor-pointer">+ ADD NEW</button>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="font-semibold text-slate-800">Deworming (if available)</div>
+              {mode !== 'view' && (
+                <button
+                  type="button"
+                  onClick={addDewormRow}
+                  className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+                  title="Add row"
+                >
+                  <FiPlus className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="space-y-3">
+              {(Array.isArray(form.deworming) ? form.deworming : []).map((d, idx) => (
+                <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Deworming Name</label>
+                    <div className="relative">
+                      <button type="button" onClick={()=>{ if(mode!=='view'){ setOpenDewormIndex(openDewormIndex===idx ? -1 : idx) } }} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-left">
+                        {d?.name || 'Deworming'}
+                      </button>
+                      {openDewormIndex === idx && (
+                        <div className="absolute z-[60] mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                          {Array.from(new Set([d?.name, ...dewormItems].filter(Boolean))).map(opt => (
+                            <div key={opt} onClick={()=>{ updateDeworming(idx, 'name', opt); setOpenDewormIndex(-1) }} className="px-3 py-2 hover:bg-slate-50 cursor-pointer">{opt}</div>
+                          ))}
+                          <div className="border-t border-slate-100"></div>
+                          <button type="button" onClick={()=>openQuickAdd('deworm', idx)} className="w-full text-left px-3 py-2 text-indigo-600 hover:bg-indigo-50 cursor-pointer">+ ADD NEW</button>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Date Given</label>
+                    <input type="date" value={d?.dateGiven || ''} onChange={e=>updateDeworming(idx, 'dateGiven', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Next Deworming Days</label>
+                    <input type="number" min="1" value={d?.days ?? 90} onChange={e=>updateDeworming(idx, 'days', e.target.value)} placeholder="e.g. 90" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Next Due (auto)</label>
+                    <input value={d?.nextDue || ''} readOnly placeholder="Next Due (auto)" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Vet's Name / Signature</label>
+                    <div className="flex items-center gap-2">
+                      <input value={d?.vet || ''} onChange={e=>updateDeworming(idx, 'vet', e.target.value)} placeholder="Vet's Name / Signature" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
+                      {mode !== 'view' && (
+                        <button
+                          type="button"
+                          onClick={() => deleteDewormRow(idx)}
+                          className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
+                          title="Delete row"
+                          disabled={(Array.isArray(form.deworming) ? form.deworming.length : 0) <= 1}
+                        >
+                          <FiTrash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Date Given</label>
-                <input type="date" value={form.deworming?.dateGiven || ''} onChange={e=>updateDeworming('dateGiven', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Next Deworming Days</label>
-                <input type="number" min="1" value={form.deworming?.days ?? 90} onChange={e=>updateDeworming('days', e.target.value)} placeholder="e.g. 90" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Next Due (auto)</label>
-                <input value={form.deworming?.nextDue || ''} readOnly placeholder="Next Due (auto)" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Vet's Name / Signature</label>
-                <input value={form.deworming?.vet || ''} onChange={e=>updateDeworming('vet', e.target.value)} placeholder="Vet's Name / Signature" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
-              </div>
+              ))}
             </div>
             <div className="text-xs text-slate-600 mt-2">Note: Deworming next due = Date Given + entered days (default 90).</div>
           </section>
@@ -3081,6 +3330,15 @@ export default function ReceptionPets(){
                     <option value="Dr. Mazhar Hussain">Dr. Mazhar Hussain</option>
                   )}
                 </select>
+                {form.clinic.consultingVet && (
+                  <div className="text-xs text-slate-600 mt-1">
+                    {(() => {
+                      const doc = (doctors || []).find(d => String(d?.name || d?.username || '').trim() === String(form.clinic.consultingVet || '').trim())
+                      const fee = doc && (doc.fee != null && doc.fee !== '') ? doc.fee : null
+                      return fee != null ? `Consultation Fee: Rs. ${Number(fee).toLocaleString()}` : ''
+                    })()}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Record Entered</label>
@@ -3093,11 +3351,64 @@ export default function ReceptionPets(){
                 <label className="block text-sm font-medium text-slate-700 mb-1">Remarks / Notes</label>
                 <input value={form.clinic.remarks} onChange={e=>updateSection('clinic','remarks',e.target.value)} placeholder="Remarks / Notes" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Consultant Fees (Optional)</label>
-                <input value={form.clinic.consultantFees} onChange={e=>updateSection('clinic','consultantFees',e.target.value)} placeholder="Consultant Fees (Optional)" type="number" min="0" step="0.01" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
-              </div>
+              {form.clinic.consultantFees && parseFloat(form.clinic.consultantFees || 0) > 0 && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+                    <select value={form.clinic.paymentMethod || 'Cash'} onChange={e=>updateSection('clinic','paymentMethod',e.target.value)} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'}>
+                      <option value="Cash">Cash</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Card">Card</option>
+                      <option value="Online Payment">Online Payment</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Amount Received</label>
+                    <input value={form.clinic.receivedAmount ?? ''} onChange={e=>updateSection('clinic','receivedAmount',e.target.value)} placeholder="Amount Received" type="number" min="0" step="0.01" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Discount Type</label>
+                    <select value={form.clinic.discountType || 'PKR'} onChange={e=>updateSection('clinic','discountType',e.target.value)} className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'}>
+                      <option value="PKR">PKR</option>
+                      <option value="%">%</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Discount</label>
+                    <input value={form.clinic.discount ?? ''} onChange={e=>updateSection('clinic','discount',e.target.value)} placeholder={form.clinic.discountType === '%' ? 'Discount %' : 'Discount amount'} type="number" min="0" step="0.01" className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white" disabled={mode==='view'} />
+                  </div>
+                </>
+              )}
             </div>
+
+            {parseFloat(form?.clinic?.consultantFees || 0) > 0 && (
+              <div className="mt-4 pt-4 border-t border-sky-200/60 text-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="flex items-center justify-between gap-6">
+                    <div className="text-slate-500 font-semibold">Consultant Fee:</div>
+                    <div className="font-medium">Rs. {Math.round(clinicBill.fee)}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-6">
+                    <div className="text-slate-500 font-semibold">Discount:</div>
+                    <div className="font-medium">
+                      {String(form?.clinic?.discountType || 'PKR') === '%' ? `${Math.round(parseFloat(form?.clinic?.discount || 0))}%` : `Rs. ${Math.round(clinicBill.discount)}`}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-6">
+                    <div className="text-slate-500 font-semibold">Total:</div>
+                    <div className="font-medium">{Math.round(clinicBill.total)}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-6">
+                    <div className="text-slate-500 font-semibold">Paid:</div>
+                    <div className="font-medium">{Math.round(clinicBill.paid)}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-6 md:col-span-2">
+                    <div className="text-slate-500 font-semibold">Payable/Dues:</div>
+                    <div className="font-semibold text-rose-700">{Math.round(clinicBill.dues)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Life Status */}
@@ -3249,12 +3560,42 @@ export default function ReceptionPets(){
                 <div className="text-slate-500">Pet Name</div>
                 <div className="font-medium">{receipt?.details?.pet?.petName || '-'}</div>
               </div>
-              {receipt?.details?.clinic?.consultantFees && parseFloat(receipt.details.clinic.consultantFees) > 0 && (
-                <div className="flex items-center justify-between gap-6 pt-2 border-t border-slate-200">
-                  <div className="text-slate-500 font-semibold">Consultant Fees</div>
-                  <div className="font-bold text-lg text-emerald-600">Rs. {parseFloat(receipt.details.clinic.consultantFees).toFixed(2)}</div>
-                </div>
-              )}
+              {(() => {
+                const clinic = receipt?.details?.clinic || {}
+                const fee = parseFloat(clinic?.consultantFees || 0)
+                if (!(fee > 0)) return null
+                const discountType = clinic?.discountType || 'PKR'
+                const discountVal = parseFloat(clinic?.discount || 0)
+                const received = (() => {
+                  const n = parseFloat(clinic?.receivedAmount)
+                  return Number.isFinite(n) ? n : 0
+                })()
+                const bill = calcClinicBill(fee, discountVal, discountType, received)
+                return (
+                  <div className="pt-3 border-t border-slate-200">
+                    <div className="text-center text-slate-600 font-semibold">Consultant Fees</div>
+                    <div className="text-center font-bold text-lg text-emerald-600 mt-1">Rs. {bill.fee.toFixed(2)}</div>
+                    <div className="mt-3 grid grid-cols-1 gap-2">
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="text-slate-500 font-semibold">Discount:</div>
+                        <div className="font-medium">{discountType==='%' ? `${Math.round(discountVal)}% (${Math.round(bill.discount)})` : `Rs. ${Math.round(bill.discount)}`}</div>
+                      </div>
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="text-slate-500 font-semibold">Total:</div>
+                        <div className="font-medium">{Math.round(bill.total)}</div>
+                      </div>
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="text-slate-500 font-semibold">Paid:</div>
+                        <div className="font-medium">{Math.round(bill.paid)}</div>
+                      </div>
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="text-slate-500 font-semibold">Payable/Dues:</div>
+                        <div className="font-medium">{Math.round(bill.dues)}</div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
 
             <div className="text-xs text-slate-500 mt-4 text-center">

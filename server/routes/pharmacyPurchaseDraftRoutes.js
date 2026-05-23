@@ -25,6 +25,7 @@ async function createPurchaseRowForItem(item, draft, itemIndex) {
   const uPack = item.unitsPerPack || 1;
   // Unique PO per item: invoiceNo + item index + timestamp suffix
   const purchaseOrderNo = `${draft.invoiceNo}-ITEM-${itemIndex + 1}-${Date.now()}`;
+  const totalItems = item.totalItems != null ? Number(item.totalItems) : (item.qtyPacks || 0) * uPack;
 
   const purchaseItem = {
     medicineName:    item.medicineName,
@@ -34,18 +35,18 @@ async function createPurchaseRowForItem(item, draft, itemIndex) {
     mainCategory:    item.mainCategory || "",
     subCategory:     item.subCategory  || "",
     category:        item.subCategory  || item.mainCategory || "",
-    expiryDate:      item.expiryDate   || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    expiryDate:      item.expiryDate ? new Date(item.expiryDate) : undefined,
     unit:            item.unit         || "pieces",
     containerType:   item.containerType || "",
     qtyPacks:        item.qtyPacks     || 0,
     unitsPerPack:    uPack,
     buyPerPack:      item.buyPerPack   || 0,
     salePerPack:     item.salePerPack  || 0,
-    totalItems:      (item.qtyPacks || 0) * uPack,
+    totalItems,
     buyPerUnit:      uPack > 0 ? +((item.buyPerPack  || 0) / uPack).toFixed(4) : 0,
     salePerUnit:     uPack > 0 ? +((item.salePerPack || 0) / uPack).toFixed(4) : 0,
     // legacy compat
-    quantity:        (item.qtyPacks || 0) * uPack,
+    quantity:        totalItems,
     purchasePrice:   uPack > 0 ? +((item.buyPerPack  || 0) / uPack).toFixed(4) : 0,
     salePrice:       uPack > 0 ? +((item.salePerPack || 0) / uPack).toFixed(4) : 0,
     totalCost:       item.lineTotal    || 0,
@@ -81,23 +82,79 @@ async function createPurchaseRowForItem(item, draft, itemIndex) {
   return purchase;
 }
 
-// ── Helper: create a PharmacyMedicine record from a draft item ──────────────
+// ── Helper: upsert a PharmacyMedicine record from a draft item ───────────────
+// If a medicine with the same barcode (or same name+batch) already exists,
+// increment its quantity and update prices rather than inserting a duplicate.
 async function createMedicineFromItem(item, draft) {
   const uPack = item.unitsPerPack || 1;
+  const incomingQty      = item.totalItems != null ? Number(item.totalItems) : (item.qtyPacks || 0) * uPack;
+  const incomingPurchase = uPack > 0 ? +((item.buyPerPack  || 0) / uPack).toFixed(4) : 0;
+  const incomingSale     = uPack > 0 ? +((item.salePerPack || 0) / uPack).toFixed(4) : 0;
+  const safeExpiry       = item.expiryDate ? new Date(item.expiryDate) : undefined;
+
+  // If we have an originalMedicineId, use that!
+  if (item.originalMedicineId) {
+    const existing = await PharmacyMedicine.findById(item.originalMedicineId);
+    if (existing) {
+      existing.quantity      += incomingQty;
+      existing.purchasePrice  = incomingPurchase;
+      existing.salePrice      = incomingSale;
+      if (safeExpiry)          existing.expiryDate = safeExpiry;
+      existing.supplierName   = draft.supplierName || existing.supplierName;
+      existing.purchaseDate   = draft.invoiceDate  || existing.purchaseDate;
+      existing.invoiceNo      = draft.invoiceNo    || existing.invoiceNo;
+      existing.invoiceDate    = draft.invoiceDate  || existing.invoiceDate;
+      existing.isActive       = true;
+      await existing.save();
+      return existing;
+    }
+  }
+
+  // Build the match filter — prefer barcode (unique), fall back to name+batch
+  const barcode = (item.barcode || "").trim();
+  const batchNo = (item.batchNo || "").trim();
+  let matchFilter = null;
+
+  if (barcode) {
+    matchFilter = { barcode };
+  } else if (batchNo) {
+    matchFilter = { medicineName: item.medicineName, batchNo };
+  }
+
+  // If we have a match key, try to find an existing record
+  if (matchFilter) {
+    const existing = await PharmacyMedicine.findOne(matchFilter);
+    if (existing) {
+      // Restock: add incoming quantity, update prices and metadata
+      existing.quantity      += incomingQty;
+      existing.purchasePrice  = incomingPurchase;
+      existing.salePrice      = incomingSale;
+      if (safeExpiry)          existing.expiryDate = safeExpiry;
+      existing.supplierName   = draft.supplierName || existing.supplierName;
+      existing.purchaseDate   = draft.invoiceDate  || existing.purchaseDate;
+      existing.invoiceNo      = draft.invoiceNo    || existing.invoiceNo;
+      existing.invoiceDate    = draft.invoiceDate  || existing.invoiceDate;
+      existing.isActive       = true;
+      await existing.save();
+      return existing;
+    }
+  }
+
+  // No existing record — insert fresh
   const med = new PharmacyMedicine({
     medicineName:  item.medicineName,
     genericName:   item.genericName  || "",
-    batchNo:       item.batchNo      || "",
-    barcode:       item.barcode      || "",
+    batchNo,
+    barcode,
     mainCategory:  item.mainCategory || "",
     subCategory:   item.subCategory  || "",
     category:      item.subCategory  || item.mainCategory || "",
-    expiryDate:    item.expiryDate   || undefined,
-    quantity:      (item.qtyPacks || 0) * uPack,
+    expiryDate:    safeExpiry,
+    quantity:      incomingQty,
     unit:          item.unit         || "pieces",
     containerType: item.containerType || "",
-    purchasePrice: uPack > 0 ? +((item.buyPerPack  || 0) / uPack).toFixed(4) : 0,
-    salePrice:     uPack > 0 ? +((item.salePerPack || 0) / uPack).toFixed(4) : 0,
+    purchasePrice: incomingPurchase,
+    salePrice:     incomingSale,
     minSalePrice:  0,
     supplierName:  draft.supplierName || "",
     purchaseDate:  draft.invoiceDate,

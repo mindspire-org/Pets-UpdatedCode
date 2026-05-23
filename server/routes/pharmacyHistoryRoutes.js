@@ -512,15 +512,23 @@ router.post("/returns/customer", async (req, res) => {
     originalSale.lineDiscounts = newLineDiscounts;
 
     const billDiscPct = originalSale.billDiscountPercent || 0;
-    const billDiscAmt = originalSale.billDiscountAmount || (newSubtotal * billDiscPct / 100);
+    // Fix: Recalculate bill discount based on new subtotal to maintain the same percentage,
+    // or keep it fixed if it was an amount. Usually, if billDiscountPercent is present, it's a percentage.
+    let billDiscAmt = originalSale.billDiscountAmount || 0;
+    if (billDiscPct > 0) {
+      billDiscAmt = (newSubtotal * billDiscPct) / 100;
+    } else {
+      // If it was a fixed amount, it shouldn't exceed the new subtotal
+      billDiscAmt = Math.min(billDiscAmt, newSubtotal);
+    }
     originalSale.billDiscountAmount = billDiscAmt;
 
     const taxPct = originalSale.salesTaxPercent || 0;
-    const afterBillDisc = newSubtotal - billDiscAmt;
-    const newTaxAmt = afterBillDisc * (taxPct / 100);
+    const afterBillDisc = Math.max(0, newSubtotal - billDiscAmt);
+    const newTaxAmt = (afterBillDisc * taxPct) / 100;
     originalSale.salesTaxAmount = newTaxAmt;
 
-    const newTotal = afterBillDisc + newTaxAmt + (originalSale.previousDue || 0);
+    const newTotal = Math.max(0, afterBillDisc + newTaxAmt + (originalSale.paymentCharge || 0));
     originalSale.totalAmount = newTotal;
     originalSale.discount = newLineDiscounts + billDiscAmt;
 

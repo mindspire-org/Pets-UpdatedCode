@@ -20,6 +20,22 @@ export default function AdminLayout() {
   }, [navigate])
 
   useEffect(() => {
+    try {
+      const auth = JSON.parse(localStorage.getItem('admin_auth') || '{}')
+      if (!auth?.username) return
+      const role = auth.role?.toLowerCase()
+      const hasPortalAccess = Array.isArray(auth.portalAccess)
+        ? auth.portalAccess.map(p => String(p).toLowerCase()).includes('admin')
+        : false
+      if (role !== 'admin' || !hasPortalAccess) {
+        navigate('/admin/login', { replace: true })
+      }
+    } catch {
+      navigate('/admin/login', { replace: true })
+    }
+  }, [navigate])
+
+  useEffect(() => {
     let mounted = true
     ;(async () => {
       const cfg = await loadSidebarConfig('admin')
@@ -34,7 +50,7 @@ export default function AdminLayout() {
     try {
       const auth = JSON.parse(localStorage.getItem('admin_auth') || '{}')
       if (!auth?.role) return
-      if (auth.role === 'admin' || auth.role === 'Admin') return
+      if (auth.role?.toLowerCase() === 'admin') return
       if (!sidebarConfig) return
 
       const item = matchSidebarItemByPath(sidebarConfig, location.pathname)

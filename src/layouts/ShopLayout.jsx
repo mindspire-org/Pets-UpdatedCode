@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   FiHome, FiPackage, FiShoppingCart, FiTruck, FiBarChart2, 
-  FiMenu, FiX, FiLogOut, FiSettings, FiArrowLeft 
+  FiMenu, FiX, FiLogOut, FiSettings, FiXCircle, FiUsers, FiCreditCard, FiFileText 
 } from 'react-icons/fi';
 import { useSettings } from '../context/SettingsContext';
 import DaySessionBanner from '../components/DaySessionBanner';
@@ -14,11 +14,53 @@ export default function ShopLayout() {
   const navigate = useNavigate();
   const { settings } = useSettings();
 
+  const shopUser = JSON.parse(localStorage.getItem('shop_auth') || '{}');
+
+  useEffect(() => {
+    if (!shopUser?.username) {
+      navigate('/shop/login', { replace: true })
+    }
+  }, [navigate, shopUser?.username])
+
+  if (!shopUser?.username) return null;
+
+  const isAdmin = shopUser.role?.toLowerCase() === 'admin'
+  const hasAccess = isAdmin || (Array.isArray(shopUser.portalAccess) && shopUser.portalAccess.map(p => String(p).toLowerCase()).includes('shop'))
+
+  if (!hasAccess) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-50">
+        <div className="text-center p-8 bg-white rounded-2xl shadow-lg border border-red-100">
+          <div className="h-16 w-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FiXCircle className="h-8 w-8 text-red-600" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">Access Denied</h2>
+          <p className="text-slate-600">You don't have access to the Shop Portal.</p>
+          <p className="text-sm text-slate-500 mt-2">Contact your administrator to request access.</p>
+          <button
+            onClick={() => navigate('/')}
+            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            Return to Home
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const menuItems = [
     { path: '/shop', icon: FiHome, label: 'Dashboard', exact: true },
-    { path: '/shop/products', icon: FiPackage, label: 'Products' },
+    { path: '/shop/inventory', icon: FiPackage, label: 'Inventory' },
     { path: '/shop/pos', icon: FiShoppingCart, label: 'Point of Sale' },
+    { path: '/shop/sales-history', icon: FiFileText, label: 'Sales History' },
+    { path: '/shop/purchase-history', icon: FiFileText, label: 'Purchase History' },
+    { path: '/shop/sales-return', icon: FiFileText, label: 'Sales Return' },
+    { path: '/shop/supplier-returns', icon: FiFileText, label: 'Supplier Returns' },
+    { path: '/shop/return-history', icon: FiFileText, label: 'Return History' },
+    { path: '/shop/notifications', icon: FiFileText, label: 'Notifications' },
     { path: '/shop/suppliers', icon: FiTruck, label: 'Suppliers' },
+    { path: '/shop/companies', icon: FiUsers, label: 'Companies' },
+    { path: '/shop/credit-customers', icon: FiCreditCard, label: 'Credit Customers' },
     { path: '/shop/reports', icon: FiBarChart2, label: 'Sales Reports' },
     { path: '/shop/settings', icon: FiSettings, label: 'Settings' },
   ];
@@ -33,7 +75,7 @@ export default function ShopLayout() {
   const handleLogout = () => {
     localStorage.removeItem('shop_auth');
     localStorage.removeItem('portal');
-    navigate('/shop-login');
+    navigate('/shop/login');
   };
 
   const handleToggle = () => {
@@ -45,29 +87,7 @@ export default function ShopLayout() {
     }
   };
 
-  const shopUser = JSON.parse(localStorage.getItem('shop_auth') || '{}');
-
-  const filteredMenuItems = menuItems.filter(item => {
-    // If user is admin role, show everything
-    if (shopUser.role === 'admin' || shopUser.role === 'Admin') return true;
-    
-    // If no permissions defined for shop portal specifically, show all (fallback)
-    const permissions = shopUser.sidebarPermissions?.shop;
-    if (!permissions) return true;
-    
-    // Check based on the path mapping
-    const pathToId = {
-      "/shop": "dashboard",
-      "/shop/products": "products",
-      "/shop/pos": "pos",
-      "/shop/suppliers": "suppliers",
-      "/shop/reports": "reports",
-      "/shop/settings": "settings"
-    };
-    
-    const pageId = pathToId[item.path];
-    return pageId ? permissions.includes(pageId) : true;
-  });
+  const filteredMenuItems = menuItems;
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -76,13 +96,6 @@ export default function ShopLayout() {
         <div className="px-3 md:px-5 py-2">
           <div className="h-12 w-full rounded-full border border-blue-100 bg-blue-50/60 shadow-sm flex items-center justify-between px-2">
             <div className="flex items-center gap-2">
-              <Link
-                to="/"
-                className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-600 hover:text-slate-800 border border-slate-200"
-                aria-label="Back to modules"
-              >
-                <FiArrowLeft className="h-5 w-5" />
-              </Link>
               <button
                 onClick={handleToggle}
                 className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-600 hover:text-slate-800 border border-slate-200"

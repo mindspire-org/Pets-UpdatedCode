@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FiPlus, FiSearch, FiPrinter, FiX, FiClipboard } from 'react-icons/fi';
+import { FiPlus, FiSearch, FiPrinter, FiX, FiClipboard, FiEye, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { petsAPI, pharmacyDuesAPI, proceduresAPI, settingsAPI, procedureCatalogAPI } from '../../services/api';
 
 const PROCEDURE_CATALOG = [
@@ -329,21 +329,30 @@ export default function ReceptionProcedures() {
   const [activeRowIndex, setActiveRowIndex] = useState(null);
   const [previousDues, setPreviousDues] = useState(0);
   const [subtotal, setSubtotal] = useState(0);
+  const [discountValue, setDiscountValue] = useState(0);
+  const [discountType, setDiscountType] = useState('PKR');
   const [receivedAmount, setReceivedAmount] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [saving, setSaving] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
+  const [toast, setToast] = useState('');
   const printRef = useRef(null);
   const [hospitalSettings, setHospitalSettings] = useState(null);
   const [records, setRecords] = useState([]);
   const todayStr = () => new Date().toISOString().slice(0,10);
-  const [dateFrom, setDateFrom] = useState(todayStr());
-  const [dateTo, setDateTo] = useState(todayStr());
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [creatingItem, setCreatingItem] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
   const [editingRecordId, setEditingRecordId] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState(null);
+
+  const showToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(''), 3500);
+  };
 
   useEffect(() => {
     const loadPets = async () => {
@@ -364,7 +373,7 @@ export default function ReceptionProcedures() {
 
   const refreshRecords = async () => {
     try {
-      const res = await proceduresAPI.getAll('');
+      const res = await proceduresAPI.getAll('?includeImported=true');
       const arr = res.data || [];
       const normalized = arr.map(r => {
         const gt = Number(r.grandTotal ?? 0);
@@ -377,7 +386,7 @@ export default function ReceptionProcedures() {
         return { ...r, receivedAmount: recv, receivable: due };
       });
       setRecords(normalized);
-    } catch {
+    } catch (err) {
       setRecords([]);
     }
   };
@@ -395,39 +404,40 @@ export default function ReceptionProcedures() {
 
   // Load procedure catalog from backend; if empty, seed from built-in list once
   useEffect(() => {
-    (async () => {
+    let isMounted = true;
+    const initCatalog = async () => {
       try {
         const res = await procedureCatalogAPI.getAll();
+        if (!isMounted) return;
         const dbItems = (res?.data && Array.isArray(res.data)) ? res.data : [];
+        
         if (dbItems.length === 0) {
           try {
-            await procedureCatalogAPI.bulkUpsert(PROCEDURE_CATALOG);
+            // Use a clean version of the catalog for seeding
+            const seedData = PROCEDURE_CATALOG.map(item => ({
+              mainCategory: item.mainCategory,
+              subCategory: item.subCategory,
+              drug: item.drug,
+              unit: item.unit || 'No',
+              defaultAmount: item.defaultAmount || 0,
+              defaultQuantity: 1
+            }));
+            await procedureCatalogAPI.bulkUpsert(seedData);
             const res2 = await procedureCatalogAPI.getAll();
-            setCatalog(res2?.data || []);
+            if (isMounted) setCatalog(res2?.data || []);
           } catch (seedErr) {
-            setCatalog(PROCEDURE_CATALOG);
+            console.error('Seeding failed:', seedErr);
+            if (isMounted) setCatalog(PROCEDURE_CATALOG);
           }
         } else {
-          // Merge any missing built-in items into DB (upsert only the missing ones)
-          const keyOf = (i) => `${i.mainCategory}||${i.subCategory}||${i.drug}`;
-          const dbKeys = new Set(dbItems.map(keyOf));
-          const missing = PROCEDURE_CATALOG.filter(i => !dbKeys.has(keyOf(i)));
-          if (missing.length > 0) {
-            try {
-              await procedureCatalogAPI.bulkUpsert(missing);
-              const res2 = await procedureCatalogAPI.getAll();
-              setCatalog(res2?.data || []);
-            } catch {
-              setCatalog([...dbItems, ...missing]);
-            }
-          } else {
-            setCatalog(dbItems);
-          }
+          if (isMounted) setCatalog(dbItems);
         }
       } catch (e) {
-        setCatalog(PROCEDURE_CATALOG);
+        if (isMounted) setCatalog(PROCEDURE_CATALOG);
       }
-    })();
+    };
+    initCatalog();
+    return () => { isMounted = false; };
   }, []);
 
   useEffect(() => {
@@ -443,8 +453,16 @@ export default function ReceptionProcedures() {
         return;
       }
       try {
-        const res = await pharmacyDuesAPI.getByClient(petDetails.clientId);
-        setPreviousDues(Number(res.previousDue || res.data?.previousDue || res.data?.totalDue || 0));
+        // Calculate previous dues only from procedure records (not consultation/registration)
+        const procsRes = await proceduresAPI.getAll(`?clientId=${encodeURIComponent(petDetails.clientId)}&includeImported=true`);
+        const clientProcs = procsRes?.data || [];
+        const procedureDues = clientProcs.reduce((sum, rec) => {
+          const gt = Number(rec.grandTotal ?? (Number(rec.subtotal || 0) + Number(rec.previousDues || 0)));
+          const recv = Number(rec.receivedAmount ?? 0);
+          const receivable = Number(rec.receivable ?? Math.max(0, gt - recv));
+          return sum + receivable;
+        }, 0);
+        setPreviousDues(procedureDues);
       } catch {
         setPreviousDues(0);
       }
@@ -810,10 +828,14 @@ export default function ReceptionProcedures() {
         amount: Number(r.amount || 0),
       })),
       subtotal,
+      discount: discountAmount,
+      discountType,
+      discountValue: Number(discountValue || 0),
       previousDues,
       grandTotal,
       receivedAmount: paid,
       receivable: receivableNow,
+      paymentMethod,
     };
 
     try {
@@ -831,6 +853,7 @@ export default function ReceptionProcedures() {
           createdAt: saved.createdAt || new Date().toISOString(),
           ...saved,
         }, ...prev]);
+        showToast('Procedure saved! Session-1 will appear in Procedure Patient Details.');
       }
       try {
         const id = finalClientId || petDetails.contact || 'unknown';
@@ -863,16 +886,23 @@ export default function ReceptionProcedures() {
     }
   };
 
-  const grandTotal = subtotal + previousDues;
+  const discountAmount = useMemo(() => {
+    if (discountType === '%') {
+      return (subtotal * Number(discountValue || 0)) / 100;
+    }
+    return Number(discountValue || 0);
+  }, [subtotal, discountValue, discountType]);
+
+  const grandTotal = Math.max(0, subtotal - discountAmount) + previousDues;
   const receivable = Math.max(0, grandTotal - Number(receivedAmount || 0));
 
   const filteredRecords = useMemo(() => {
-    const from = dateFrom ? new Date(dateFrom) : null;
-    const to = dateTo ? new Date(dateTo) : null;
     return records.filter(r => {
-      const dt = new Date(r.createdAt || r.date || Date.now());
-      if (from && dt < new Date(from.getFullYear(), from.getMonth(), from.getDate())) return false;
-      if (to && dt > new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999)) return false;
+      const rawDate = r.createdAt || r.date || new Date().toISOString();
+      const recordDateStr = rawDate.slice(0, 10); // "YYYY-MM-DD"
+      
+      if (dateFrom && recordDateStr < dateFrom) return false;
+      if (dateTo && recordDateStr > dateTo) return false;
       return true;
     });
   }, [records, dateFrom, dateTo]);
@@ -903,6 +933,8 @@ export default function ReceptionProcedures() {
     const totalsTableHTML = (
       '<table>'+
         '<tr><td style="border:1px solid #000;padding:3px">Total</td><td style="border:1px solid #000;padding:3px;text-align:right">'+ Number(data.subtotal||0).toLocaleString() +'</td></tr>'+
+        (data.discount > 0 ? '<tr><td style="border:1px solid #000;padding:3px">Discount '+(data.discountType === '%' ? '('+data.discountValue+'%)' : '')+'</td><td style="border:1px solid #000;padding:3px;text-align:right">- Rs '+ Number(data.discount||0).toLocaleString() +'</td></tr>' : '') +
+        '<tr><td style="border:1px solid #000;padding:3px">Prev. Dues</td><td style="border:1px solid #000;padding:3px;text-align:right">'+ Number(data.previousDues||0).toLocaleString() +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">G.Total</td><td style="border:1px solid #000;padding:3px;text-align:right">'+ Number(data.grandTotal||0).toLocaleString() +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Received</td><td style="border:1px solid #000;padding:3px;text-align:right">'+ receivedVal.toLocaleString() +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Receivable</td><td style="border:1px solid #000;padding:3px;text-align:right">'+ receivableVal.toLocaleString() +'</td></tr>'+
@@ -972,9 +1004,9 @@ export default function ReceptionProcedures() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <FiClipboard className="text-emerald-600" /> Procedures
+            <FiClipboard className="text-emerald-600" /> Procedure Patients
           </h1>
-          <p className="text-slate-600 text-sm">Create procedure sheets with patient details and dues.</p>
+          <p className="text-slate-600 text-sm">Manage procedure patients with details and dues tracking.</p>
         </div>
         <button
           onClick={() => {
@@ -1197,19 +1229,47 @@ export default function ReceptionProcedures() {
               </div>
 
               {/* Summary */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-                <div className="md:col-span-2 text-sm text-slate-600"></div>
-                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-2 text-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div className="md:col-span-1 text-sm text-slate-600"></div>
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-2 text-sm w-full">
                   <div className="flex justify-between">
                     <span>Subtotal</span>
                     <span>Rs {subtotal.toLocaleString()}</span>
                   </div>
-                  {previousDues > 0 && (
-                    <div className="flex justify-between text-amber-700">
-                      <span>Previous Receivable</span>
-                      <span>Rs {previousDues.toLocaleString()}</span>
+                  <div className="flex justify-between items-center">
+                    <span>Discount</span>
+                    <div className="flex gap-1 items-center flex-wrap justify-end">
+                      <input
+                        type="number"
+                        min="0"
+                        value={discountValue}
+                        onChange={(e) => setDiscountValue(Number(e.target.value || 0))}
+                        className="w-24 sm:w-28 h-8 px-2 rounded-lg border border-slate-300 text-right text-xs bg-white"
+                      />
+                      <select
+                        value={discountType}
+                        onChange={(e) => setDiscountType(e.target.value)}
+                        className="w-20 sm:w-24 h-8 px-1 rounded-lg border border-slate-300 text-center text-xs bg-white"
+                      >
+                        <option value="PKR">PKR</option>
+                        <option value="%">%</option>
+                      </select>
+                    </div>
+                  </div>
+                  {discountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-600 font-medium">
+                      <span>Discount {discountType === '%' ? `(${discountValue}%)` : ''}</span>
+                      <span>- Rs {discountAmount.toLocaleString()}</span>
                     </div>
                   )}
+                  <div className="flex justify-between text-amber-700">
+                    <span>Prev. Dues</span>
+                    <span>Rs {previousDues.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold border-t border-slate-200 pt-2 mt-1">
+                    <span>Grand Total</span>
+                    <span>Rs {grandTotal.toLocaleString()}</span>
+                  </div>
                   <div className="flex justify-between items-center">
                     <span>Received Today</span>
                     <input
@@ -1217,16 +1277,24 @@ export default function ReceptionProcedures() {
                       min="0"
                       value={receivedAmount}
                       onChange={(e) => setReceivedAmount(Number(e.target.value || 0))}
-                      className="w-28 h-8 px-2 rounded-lg border border-slate-300 text-right text-xs bg-white"
+                      className="w-28 sm:w-36 md:w-40 h-8 px-2 rounded-lg border border-slate-300 text-right text-xs bg-white"
                     />
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Method</span>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                      className="w-28 sm:w-36 md:w-40 h-8 px-2 rounded-lg border border-slate-300 text-right text-xs bg-white"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="Bank">Bank/Card</option>
+                      <option value="Online">Online</option>
+                    </select>
                   </div>
                   <div className="flex justify-between">
                     <span>Receivable (incl. previous)</span>
                     <span>Rs {receivable.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between font-semibold border-t border-slate-200 pt-2 mt-1">
-                    <span>Grand Total</span>
-                    <span>Rs {grandTotal.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -1445,13 +1513,15 @@ export default function ReceptionProcedures() {
             <span>Subtotal</span>
             <span>Rs {subtotal.toLocaleString()}</span>
           </div>
+          {discountAmount > 0 && (
+            <div className="flex justify-between text-emerald-700">
+              <span>Discount {discountType === '%' ? `(${discountValue}%)` : ''}</span>
+              <span>- Rs {discountAmount.toLocaleString()}</span>
+            </div>
+          )}
           <div className="flex justify-between">
-            <span>Received Today</span>
-            <span>Rs {Math.max(0, Number(receivedAmount || 0)).toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Receivable</span>
-            <span>Rs {receivable.toLocaleString()}</span>
+            <span>Prev. Dues</span>
+            <span>Rs {previousDues.toLocaleString()}</span>
           </div>
           <div className="flex justify-between font-semibold border-t border-slate-300 pt-1 mt-1">
             <span>Grand Total</span>
@@ -1506,12 +1576,15 @@ export default function ReceptionProcedures() {
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Date</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Patient ID</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Owner (Client ID)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Subtotal</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Received</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Receivable</th>
-                <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600">Actions</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Pet ID</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Owner</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Procedure</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Billed</th>
+                <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600">Method</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Paid</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Due</th>
+                <th className="px-3 py-2 text-center text-xs font-bold text-slate-600">Status</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1519,25 +1592,82 @@ export default function ReceptionProcedures() {
                 <tr key={r._id} className="border-t border-slate-100">
                   <td className="px-3 py-2">{new Date(r.createdAt || Date.now()).toLocaleDateString()}</td>
                   <td className="px-3 py-2">{r.petId}</td>
-                  <td className="px-3 py-2">{r.ownerName} ({r.clientId})</td>
-                  <td className="px-3 py-2 text-right">{Number(r.subtotal||0).toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">{Number(r.receivedAmount||0).toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right">{Number(r.receivable||0).toLocaleString()}</td>
+                  <td className="px-3 py-2">
+                    {r.ownerName}
+                    <div className="text-[10px] text-slate-500">({r.clientId})</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="text-xs font-medium text-slate-800 truncate max-w-[150px]" title={r.procedures?.[0]?.drug || 'Procedure'}>
+                      {r.procedures?.[0]?.drug || 'Procedure'}
+                      {r.procedures?.length > 1 ? ` (+${r.procedures.length - 1})` : ''}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right">{Number(r.grandTotal || 0).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-center">{r.paymentMethod || 'Cash'}</td>
+                  <td className="px-3 py-2 text-right text-emerald-600 font-semibold">{Number(r.receivedAmount || 0).toLocaleString()}</td>
+                  <td className={`px-3 py-2 text-right font-bold ${Number(r.receivable || 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    Rs {Number(r.receivable || 0).toLocaleString()}
+                  </td>
                   <td className="px-3 py-2 text-center">
-                    <button onClick={()=>{ setReceiptData(r); setShowReceiptModal(true); }} className="text-indigo-600 hover:underline mr-2">View</button>
-                    <button onClick={()=>{ try { printThermalReceipt(r) } catch{} }} className="text-emerald-600 hover:underline mr-2">Reprint</button>
-                    <button onClick={()=> handleEdit(r)} className="text-blue-600 hover:underline mr-2">Edit</button>
-                    <button onClick={()=> handleDelete(r)} className="text-red-600 hover:underline">Delete</button>
+                    <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
+                      r.status === 'ongoing' 
+                        ? 'bg-yellow-400 text-yellow-900 shadow-sm' 
+                        : 'bg-emerald-500 text-white shadow-sm'
+                    }`}>
+                      {r.status === 'ongoing' ? 'In-Progress' : 'Completed'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex justify-end gap-2 text-xs">
+                      <button 
+                        onClick={() => { setReceiptData(r); setShowReceiptModal(true); }} 
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-indigo-600 hover:bg-indigo-50 inline-flex items-center justify-center transition-colors"
+                        title="View"
+                      >
+                        <FiEye className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => { try { printThermalReceipt(r) } catch {} }} 
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 inline-flex items-center justify-center transition-colors"
+                        title="Reprint"
+                      >
+                        <FiPrinter className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleEdit(r)} 
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-amber-600 hover:bg-amber-50 inline-flex items-center justify-center transition-colors"
+                        title="Edit"
+                      >
+                        <FiEdit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => { setRecordToDelete(r); setShowDeleteConfirm(true); }} 
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-red-600 hover:bg-red-50 inline-flex items-center justify-center transition-colors"
+                        title="Delete"
+                      >
+                        <FiTrash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {filteredRecords.length === 0 && (
-                <tr><td colSpan="7" className="px-3 py-6 text-center text-slate-500 text-sm">No records</td></tr>
+                <tr>
+                  <td colSpan="9" className="px-3 py-6 text-center text-slate-500 text-sm">
+                    No records
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {toast && (
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl z-[9999] text-sm font-semibold">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

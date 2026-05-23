@@ -2,10 +2,24 @@ import express from 'express';
 import StaffAdvance from '../models/StaffAdvance.js';
 import Payable from '../models/Payable.js';
 import DailyLog from '../models/DailyLog.js';
+import Voucher from '../models/Voucher.js';
+import Sequence from '../models/Sequence.js';
 import { postEntry } from '../utils/accountingService.js';
 import dayGuard from '../middleware/dayGuard.js';
 
 const router = express.Router();
+
+const fmtSeq = (n) => String(n).padStart(6, '0');
+const nextVoucherNo = async (type) => {
+  const y = new Date().getFullYear();
+  const key = `voucher:${type}:${y}`;
+  const seqDoc = await Sequence.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `${type}-${y}-${fmtSeq(seqDoc.seq || 0)}`;
+};
 
 // List advances
 router.get('/', async (req, res, next) => {
@@ -32,19 +46,44 @@ router.post('/', dayGuard(req => req.body.portal || 'admin'), async (req, res, n
     const adv = new StaffAdvance({ portal, staffId, staffName, amount, balance: amount, notes });
     await adv.save();
 
-    // Journal: DR Staff Advances (1110), CR Cash/Bank
-    await postEntry({
-      date: adv.date,
+    // 1. Create Formal Voucher for visibility in Vouchers Page
+    const vNo = await nextVoucherNo('PV');
+    const cashAcc = (paymentMethod || '').toLowerCase().includes('bank') ? '1002' : '1001';
+    
+    const voucher = new Voucher({
+      voucherNo: vNo,
+      type: 'PV',
+      status: 'posted',
+      date: adv.date || new Date(),
+      portal: portal || 'admin',
+      paymentMethod: paymentMethod || 'Cash',
+      description: notes || `Advance to ${staffName || staffId || ''}`,
+      partyType: 'none',
+      partyName: staffName || staffId,
+      lines: [
+        { accountCode: '1110', debit: amount, credit: 0 },
+        { accountCode: cashAcc, debit: 0, credit: amount },
+      ],
+    });
+    await voucher.save();
+
+    // 2. Journal Entry for Accounting Ledger
+    const je = await postEntry({
+      date: adv.date || new Date(),
       portal: portal || 'admin',
       sourceType: 'staff_advance',
-      sourceId: String(adv._id),
+      sourceId: vNo, // Link to the voucher number
       description: notes || `Advance to ${staffName || staffId || ''}`,
       lines: [
         { accountCode: '1110', debit: amount, credit: 0 },
-        { accountCode: (paymentMethod || '').toLowerCase().includes('bank') ? '1002' : '1001', debit: 0, credit: amount },
+        { accountCode: cashAcc, debit: 0, credit: amount },
       ],
-      meta: { extra: { staffId, staffName, paymentMethod } },
+      meta: { extra: { staffId, staffName, paymentMethod, voucherId: voucher._id } },
     });
+
+    // Link JE back to voucher
+    voucher.journalEntryId = je._id;
+    await voucher.save();
 
     await DailyLog.create({ date: new Date().toISOString().slice(0,10), portal: portal || 'admin', sessionId: req.daySession?._id, action: 'staff_advance_create', refType: 'staff_advance', refId: String(adv._id), description: `Advance ${amount} to ${staffName || staffId || ''}`, amount });
 

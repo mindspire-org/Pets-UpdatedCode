@@ -1,32 +1,80 @@
 import React, { useState, useEffect } from 'react'
-import { FiDownload, FiUpload, FiTrash2, FiAlertTriangle, FiDatabase, FiSettings, FiTag } from 'react-icons/fi'
-import { backupAPI } from '../../services/api'
+import { FiDownload, FiUpload, FiTrash2, FiAlertTriangle, FiDatabase, FiSettings, FiSave, FiUploadCloud } from 'react-icons/fi'
+import { backupAPI, petshopPharmacySettingsAPI } from '../../services/api'
+import { useSettings } from '../../context/SettingsContext'
 
 export default function ShopSettings() {
+  const { refresh } = useSettings()
   const [importFile, setImportFile] = useState(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [confirmDialog, setConfirmDialog] = useState({ show: false, title: '', message: '', onConfirm: null })
-  
-  // Sticker settings
-  const [stickerSettings, setStickerSettings] = useState({
-    companyName: '',
-    phone: ''
+
+  const [shopSettings, setShopSettings] = useState({
+    pharmacyName: '',
+    phone: '',
+    address: '',
+    email: '',
+    billingFooter: '',
+    companyLogo: '',
+    billDiscountPercent: 0,
+    salesTaxPercent: 0
   })
 
   useEffect(() => {
-    // Load sticker settings from localStorage
-    setStickerSettings({
-      companyName: localStorage.getItem('companyName') || 'Abbottabad Pet Hospital',
-      phone: localStorage.getItem('phone') || '0345-0520451'
-    })
+    fetchSettings()
   }, [])
 
-  const handleSaveStickerSettings = () => {
-    localStorage.setItem('companyName', stickerSettings.companyName)
-    localStorage.setItem('phone', stickerSettings.phone)
-    setMessage('Sticker settings saved successfully.')
-    setTimeout(() => setMessage(''), 3000)
+  const fetchSettings = async () => {
+    try {
+      const res = await petshopPharmacySettingsAPI.get()
+      if (res.data) {
+        setShopSettings({
+          pharmacyName: res.data.pharmacyName || '',
+          phone: res.data.phone || '',
+          address: res.data.address || '',
+          email: res.data.email || '',
+          billingFooter: res.data.billingFooter || '',
+          companyLogo: res.data.companyLogo || '',
+          billDiscountPercent: res.data.billDiscountPercent || 0,
+          salesTaxPercent: res.data.salesTaxPercent || 0
+        })
+      }
+    } catch (e) {
+      console.error('Failed to fetch settings:', e)
+    }
+  }
+
+  const handleSaveSettings = async (e) => {
+    e.preventDefault()
+    try {
+      setBusy(true)
+      const auth = JSON.parse(localStorage.getItem('shop_auth') || '{}')
+      const username = auth.username || 'system'
+      const payload = {
+        ...shopSettings,
+        updatedBy: username
+      }
+      await petshopPharmacySettingsAPI.save(payload)
+      await refresh()
+      setMessage('Settings saved successfully.')
+      setTimeout(() => setMessage(''), 3000)
+    } catch (e) {
+      setMessage('Error: Failed to save settings')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleLogoChange = (e) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setShopSettings(prev => ({ ...prev, companyLogo: reader.result }))
+      }
+      reader.readAsDataURL(file)
+    }
   }
 
   const pickShopOnly = (data) => {
@@ -55,6 +103,10 @@ export default function ShopSettings() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const handleImportFileChange = (e) => {
+    setImportFile(e.target.files?.[0] || null)
   }
 
   const handleImport = async () => {
@@ -111,7 +163,6 @@ export default function ShopSettings() {
         </div>
       )}
 
-      {/* Custom Confirmation Dialog */}
       {confirmDialog.show && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -142,67 +193,14 @@ export default function ShopSettings() {
         </div>
       )}
 
-      {/* Sticker Settings Section */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 grid place-items-center">
-            <FiTag />
-          </div>
-          <div>
-            <h2 className="font-semibold text-lg">Sticker Settings</h2>
-            <p className="text-sm text-slate-600">Configure information displayed on product stickers</p>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Hospital/Shop Name
-            </label>
-            <input
-              type="text"
-              value={stickerSettings.companyName}
-              onChange={(e) => setStickerSettings({ ...stickerSettings, companyName: e.target.value })}
-              placeholder="e.g., Abbottabad Pet Hospital"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Phone Number
-            </label>
-            <input
-              type="text"
-              value={stickerSettings.phone}
-              onChange={(e) => setStickerSettings({ ...stickerSettings, phone: e.target.value })}
-              placeholder="e.g., 0345-0520451"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-start gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg text-sm text-purple-700 mb-4">
-          <FiTag className="mt-0.5 flex-shrink-0" />
-          <p>This information will appear at the top of all printed product stickers (58mm x 30mm labels).</p>
-        </div>
-
-        <button
-          onClick={handleSaveStickerSettings}
-          className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition-colors"
-        >
-          Save Sticker Settings
-        </button>
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 grid place-items-center"><FiDownload /></div>
+            <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 grid place-items-center"><FiDownload /></div>
             <div className="font-semibold">Export Shop Data</div>
           </div>
-          <p className="text-sm text-slate-600 mb-4">Download products, sales, and suppliers as JSON.</p>
-          <button disabled={busy} onClick={handleExport} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:opacity-60">
+          <p className="text-sm text-slate-600 mb-4">Download products, sales and suppliers as JSON.</p>
+          <button disabled={busy} onClick={handleExport} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm disabled:opacity-60">
             <FiDownload className="w-4 h-4"/> Export JSON
           </button>
         </div>
@@ -213,7 +211,7 @@ export default function ShopSettings() {
             <div className="font-semibold">Import Shop Data</div>
           </div>
           <p className="text-sm text-slate-600 mb-3">Select a previously exported JSON file to restore.</p>
-          <input type="file" accept="application/json" onChange={(e)=>setImportFile(e.target.files?.[0]||null)} className="block w-full text-sm mb-3" />
+          <input type="file" accept="application/json" onChange={handleImportFileChange} className="block w-full text-sm mb-3" />
           <button disabled={busy || !importFile} onClick={handleImport} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm disabled:opacity-60">
             <FiUpload className="w-4 h-4"/> Import JSON
           </button>
@@ -226,7 +224,7 @@ export default function ShopSettings() {
           </div>
           <div className="flex items-start gap-2 text-sm text-red-700 mb-4">
             <FiAlertTriangle className="mt-0.5"/>
-            <p>Danger action. This will permanently delete products, sales, and suppliers.</p>
+            <p>Danger action. This will permanently delete products, sales and suppliers.</p>
           </div>
           <button disabled={busy} onClick={handleDelete} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm disabled:opacity-60">
             <FiTrash2 className="w-4 h-4"/> Delete All
@@ -236,6 +234,147 @@ export default function ShopSettings() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600 flex items-center gap-2">
         <FiDatabase className="text-slate-400"/> Scope: Shop collections only (Products, Sales, Suppliers). Export/Import works with JSON files produced here.
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+          <h2 className="text-lg font-bold text-slate-800">Shop Details</h2>
+          <p className="text-xs text-slate-500 font-medium">Configure your shop information for invoices and reports</p>
+        </div>
+        <form onSubmit={handleSaveSettings} className="p-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Shop Name</label>
+              <input 
+                type="text" 
+                value={shopSettings.pharmacyName}
+                onChange={(e) => setShopSettings({...shopSettings, pharmacyName: e.target.value})}
+                placeholder="Abbottabad Pet Hospital Shop"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Phone Number</label>
+              <input 
+                type="text" 
+                value={shopSettings.phone}
+                onChange={(e) => setShopSettings({...shopSettings, phone: e.target.value})}
+                placeholder="+92-21-1234567"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Shop Address</label>
+            <textarea 
+              rows="3"
+              value={shopSettings.address}
+              onChange={(e) => setShopSettings({...shopSettings, address: e.target.value})}
+              placeholder="Enter full shop address..."
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all resize-none"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email Address</label>
+            <input 
+              type="email" 
+              value={shopSettings.email}
+              onChange={(e) => setShopSettings({...shopSettings, email: e.target.value})}
+              placeholder="shop@hospital.com"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Billing Footer</label>
+            <textarea 
+              rows="3"
+              value={shopSettings.billingFooter}
+              onChange={(e) => setShopSettings({...shopSettings, billingFooter: e.target.value})}
+              placeholder="Terms and conditions or footer message for invoices..."
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all resize-none"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Shop Logo</label>
+            <div className="flex items-center gap-4">
+              {shopSettings.companyLogo && (
+                <div className="w-16 h-16 rounded-xl border-2 border-slate-100 p-1 bg-white shrink-0 shadow-sm">
+                  <img src={shopSettings.companyLogo} alt="Logo Preview" className="w-full h-full object-contain" />
+                </div>
+              )}
+              <div className="relative flex-1">
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  onChange={handleLogoChange}
+                  className="hidden" 
+                  id="logo-upload"
+                />
+                <label 
+                  htmlFor="logo-upload"
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-dashed border-slate-200 rounded-xl text-slate-500 hover:border-blue-400 hover:text-blue-600 cursor-pointer transition-all bg-slate-50 group"
+                >
+                  <FiUploadCloud className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-sm">Choose Logo File</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-sm font-bold text-slate-700 mb-4">Default Bill Settings (POS)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Bill Discount (%)</label>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={shopSettings.billDiscountPercent}
+                    onChange={(e) => setShopSettings({...shopSettings, billDiscountPercent: parseFloat(e.target.value) || 0})}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all pr-10"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">%</span>
+                </div>
+                <p className="text-xs text-slate-400">Default discount percentage applied to bills in POS</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sales Tax (%)</label>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={shopSettings.salesTaxPercent}
+                    onChange={(e) => setShopSettings({...shopSettings, salesTaxPercent: parseFloat(e.target.value) || 0})}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-0 outline-none transition-all pr-10"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">%</span>
+                </div>
+                <p className="text-xs text-slate-400">Default sales tax percentage applied to bills in POS</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 flex justify-end">
+            <button 
+              type="submit"
+              disabled={busy}
+              className="flex items-center gap-2 px-8 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all active:scale-95 shadow-lg shadow-slate-200 disabled:opacity-50"
+            >
+              <FiSave className={busy ? 'animate-spin' : ''} /> Save Settings
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )

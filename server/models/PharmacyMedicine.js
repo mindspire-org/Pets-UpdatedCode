@@ -29,7 +29,7 @@ const pharmacyMedicineSchema = new mongoose.Schema({
   },
   expiryDate: {
     type: Date,
-    required: true
+    required: false
   },
   quantity: {
     type: Number,
@@ -125,6 +125,7 @@ const pharmacyMedicineSchema = new mongoose.Schema({
   unitsPerPack: { type: Number, default: 1 },
   buyPerPack: { type: Number, default: 0 },
   salePerPack: { type: Number, default: 0 },
+  totalItems: { type: Number, default: 0 },
   minStock: { type: Number, default: 0 },
   defaultDiscount: { type: Number, default: 0 },
   lineTaxType: { type: String, enum: ['%', 'PKR'], default: '%' },
@@ -144,11 +145,13 @@ pharmacyMedicineSchema.index({ barcode: 1 }, { unique: true, sparse: true });
 
 // Virtual for checking if medicine is expired
 pharmacyMedicineSchema.virtual('isExpired').get(function() {
+  if (!this.expiryDate) return false; // no expiry = never expires
   return this.expiryDate < new Date();
 });
 
 // Virtual for checking if expiring soon (within 30 days)
 pharmacyMedicineSchema.virtual('isExpiringSoon').get(function() {
+  if (!this.expiryDate) return false; // no expiry = never expires
   const thirtyDaysFromNow = new Date();
   thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
   return this.expiryDate <= thirtyDaysFromNow && this.expiryDate >= new Date();

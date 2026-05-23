@@ -31,7 +31,19 @@ router.post('/bulk', async (req, res) => {
       if (!payload.mainCategory || !payload.subCategory || !payload.drug) continue;
       const up = await ProcedureItem.findOneAndUpdate(
         { mainCategory: payload.mainCategory, subCategory: payload.subCategory, drug: payload.drug },
-        { $setOnInsert: payload, $set: { unit: payload.unit, defaultAmount: payload.defaultAmount, defaultQuantity: payload.defaultQuantity, active: payload.active } },
+        { 
+          $setOnInsert: {
+            mainCategory: payload.mainCategory,
+            subCategory: payload.subCategory,
+            drug: payload.drug
+          }, 
+          $set: { 
+            unit: payload.unit, 
+            defaultAmount: payload.defaultAmount, 
+            defaultQuantity: payload.defaultQuantity, 
+            active: payload.active 
+          } 
+        },
         { upsert: true, new: true }
       );
       results.push(up);

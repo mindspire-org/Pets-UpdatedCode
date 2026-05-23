@@ -56,6 +56,44 @@ router.get('/low-stock', async (req, res) => {
   }
 });
 
+// Get expiring soon products (within 30 days)
+router.get('/expiring', async (req, res) => {
+  try {
+    const now = new Date();
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+    const products = await Product.find({
+      expiryDate: { $gte: now, $lte: thirtyDaysFromNow }
+    });
+    res.json({ success: true, data: products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get expired products
+router.get('/expired', async (req, res) => {
+  try {
+    const now = new Date();
+    const products = await Product.find({
+      expiryDate: { $lt: now, $ne: null }
+    });
+    res.json({ success: true, data: products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get out of stock products
+router.get('/out-of-stock', async (req, res) => {
+  try {
+    const products = await Product.find({ quantity: 0 });
+    res.json({ success: true, data: products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Clear all products (must be defined BEFORE parameterized '/:id' route)
 router.delete('/clear', async (req, res) => {
   try {

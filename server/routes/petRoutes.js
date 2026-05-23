@@ -1,7 +1,25 @@
 import express from 'express';
 import Pet from '../models/Pet.js';
+import Voucher from '../models/Voucher.js';
+import Sequence from '../models/Sequence.js';
+import { postEntry } from '../utils/accountingService.js';
+import dayGuard from '../middleware/dayGuard.js';
+import Receivable from '../models/Receivable.js';
+import DailyLog from '../models/DailyLog.js';
 
 const router = express.Router();
+
+const fmtSeq = (n) => String(n).padStart(6, '0');
+const nextVoucherNo = async (type) => {
+  const y = new Date().getFullYear();
+  const key = `voucher:${type}:${y}`;
+  const seqDoc = await Sequence.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `${type}-${y}-${fmtSeq(seqDoc.seq || 0)}`;
+};
 
 // Get all pets
 router.get('/', async (req, res) => {
@@ -50,7 +68,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create new pet
-router.post('/', async (req, res) => {
+router.post('/', dayGuard('reception'), async (req, res) => {
   try {
     const body = { ...req.body };
     if (body.age && !body.dateOfBirth && !body.ageRecordedAt) {
@@ -74,11 +92,117 @@ router.post('/', async (req, res) => {
         }
       }
     } catch {}
+    
     const pet = new Pet(body);
     if (pet.details) {
       pet.markModified('details');
     }
     await pet.save();
+
+    // Create financial transactions if consultant fees are provided
+    try {
+      const consultantFees = Number(body.details?.clinic?.consultantFees || 0);
+      if (consultantFees > 0) {
+        // Determine payment method and received amount (default to full payment if not specified)
+        const paymentMethod = body.details?.clinic?.paymentMethod || 'Cash';
+        const receivedAmount = Number(body.details?.clinic?.receivedAmount || consultantFees);
+        
+        const cashPortion = Math.max(0, Math.min(receivedAmount, consultantFees));
+        const receivableCurrent = Math.max(0, consultantFees - cashPortion);
+
+        if (cashPortion > 0 || receivableCurrent > 0) {
+          // 1. Create Formal Voucher for visibility in Vouchers Page
+          const vNo = await nextVoucherNo('RV');
+          const pm = paymentMethod.toLowerCase();
+          const cashAcc = (pm.includes('bank') || pm.includes('card') || pm.includes('online')) ? '1002' : '1001';
+          
+          const lines = [];
+          if (cashPortion > 0) lines.push({ accountCode: cashAcc, debit: cashPortion, credit: 0 });
+          if (receivableCurrent > 0) lines.push({ accountCode: '1100', debit: receivableCurrent, credit: 0 });
+          lines.push({ accountCode: '4002', debit: 0, credit: consultantFees }); // Registration Fee Revenue
+
+          const voucher = new Voucher({
+            voucherNo: vNo,
+            type: 'RV',
+            status: 'posted',
+            date: pet.createdAt || new Date(),
+            portal: 'reception',
+            paymentMethod: paymentMethod,
+            description: `Pet Registration: ${pet.petName}`,
+            partyType: 'patient',
+            partyId: pet.id,
+            partyName: pet.petName,
+            lines: lines,
+          });
+          await voucher.save();
+
+          // 2. Post to General Ledger via postEntry
+          await postEntry({
+            date: pet.createdAt || new Date(),
+            portal: 'reception',
+            sourceType: 'pet_registration',
+            sourceId: pet.id,
+            description: `Pet Registration: ${pet.petName}`,
+            lines,
+            meta: { 
+              patientId: pet.id,
+              petId: pet.id,
+              clientId: pet.clientId,
+              portalRef: String(pet._id),
+              extra: { 
+                voucherId: voucher._id,
+                ownerName: pet.ownerName,
+                consultingVet: body.details?.clinic?.consultingVet,
+                paymentMethod: paymentMethod
+              }
+            }
+          });
+
+          // 3. Create receivable if any balance due
+          if (receivableCurrent > 0) {
+            try {
+              await Receivable.create({
+                portal: 'reception',
+                customerId: pet.clientId || undefined,
+                patientId: pet.id || undefined,
+                customerName: pet.ownerName || undefined,
+                refType: 'pet_registration',
+                refId: String(pet._id),
+                billDate: pet.createdAt || new Date(),
+                description: `Registration fees for ${pet.petName}`,
+                totalAmount: receivableCurrent,
+                balance: receivableCurrent,
+                status: 'open',
+              });
+            } catch (recErr) {
+              console.error('Failed to create receivable for pet registration:', recErr);
+            }
+          }
+
+          // 4. Log to DailyLog for Day Session Reconciliation
+          if (cashPortion > 0) {
+            try {
+              await DailyLog.create({
+                date: new Date().toISOString().slice(0,10),
+                portal: 'reception',
+                sessionId: req.daySession?._id,
+                action: 'reception_income',
+                refType: 'pet_registration',
+                refId: String(pet._id),
+                description: `Income: Registration for ${pet.petName}`,
+                amount: cashPortion
+              });
+            } catch (logErr) {
+              console.error('DailyLog creation failed for pet registration income:', logErr);
+            }
+          }
+        }
+      }
+    } catch (financialErr) {
+      console.error('Failed to create financial transactions for pet registration:', financialErr?.message || financialErr);
+      // Don't fail the pet creation if financial transactions fail
+    }
+
     res.status(201).json({ success: true, data: pet });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -148,12 +272,15 @@ router.post('/bulk', async (req, res) => {
 });
 
 // Update pet
-router.put('/:id', async (req, res) => {
+router.put('/:id', dayGuard('reception'), async (req, res) => {
   try {
     const pet = await Pet.findOne({ id: req.params.id });
     if (!pet) {
       return res.status(404).json({ success: false, message: 'Pet not found' });
     }
+    
+    // Store original consultant fees for comparison
+    const originalFees = Number(pet.details?.clinic?.consultantFees || 0);
     
     // Update all fields
     const updates = { ...req.body };
@@ -183,6 +310,132 @@ router.put('/:id', async (req, res) => {
     }
     
     await pet.save();
+
+    // Handle financial transactions if consultant fees were added/changed
+    try {
+      const newFees = Number(updates.details?.clinic?.consultantFees || 0);
+      const feesDifference = newFees - originalFees;
+      
+      if (feesDifference > 0) {
+        // Additional fees added - create new financial transactions
+        const paymentMethod = updates.details?.clinic?.paymentMethod || 'Cash';
+        const receivedAmount = Number(updates.details?.clinic?.receivedAmount || feesDifference);
+        
+        const cashPortion = Math.max(0, Math.min(receivedAmount, feesDifference));
+        const receivableCurrent = Math.max(0, feesDifference - cashPortion);
+
+        if (cashPortion > 0 || receivableCurrent > 0) {
+          // 1. Create Formal Voucher for additional fees
+          const vNo = await nextVoucherNo('RV');
+          const pm = paymentMethod.toLowerCase();
+          const cashAcc = (pm.includes('bank') || pm.includes('card') || pm.includes('online')) ? '1002' : '1001';
+          
+          const lines = [];
+          if (cashPortion > 0) lines.push({ accountCode: cashAcc, debit: cashPortion, credit: 0 });
+          if (receivableCurrent > 0) lines.push({ accountCode: '1100', debit: receivableCurrent, credit: 0 });
+          lines.push({ accountCode: '4002', debit: 0, credit: feesDifference }); // Registration Fee Revenue
+
+          const voucher = new Voucher({
+            voucherNo: vNo,
+            type: 'RV',
+            status: 'posted',
+            date: new Date(),
+            portal: 'reception',
+            paymentMethod: paymentMethod,
+            description: `Pet Registration Update: ${pet.petName} (Additional Fees)`,
+            partyType: 'patient',
+            partyId: pet.id,
+            partyName: pet.petName,
+            lines: lines,
+          });
+          await voucher.save();
+
+          // 2. Post to General Ledger via postEntry
+          await postEntry({
+            date: new Date(),
+            portal: 'reception',
+            sourceType: 'pet_registration_update',
+            sourceId: pet.id,
+            description: `Pet Registration Update: ${pet.petName} (Additional Fees)`,
+            lines,
+            meta: { 
+              patientId: pet.id,
+              petId: pet.id,
+              clientId: pet.clientId,
+              portalRef: String(pet._id),
+              extra: { 
+                voucherId: voucher._id,
+                ownerName: pet.ownerName,
+                consultingVet: updates.details?.clinic?.consultingVet,
+                paymentMethod: paymentMethod,
+                originalFees: originalFees,
+                newFees: newFees,
+                feesDifference: feesDifference
+              }
+            }
+          });
+
+          // 3. Create/update receivable if any balance due
+          if (receivableCurrent > 0) {
+            try {
+              // Check if existing receivable exists
+              const existingReceivable = await Receivable.findOne({
+                refType: 'pet_registration',
+                refId: String(pet._id),
+                status: 'open'
+              });
+
+              if (existingReceivable) {
+                // Update existing receivable
+                existingReceivable.totalAmount += receivableCurrent;
+                existingReceivable.balance += receivableCurrent;
+                existingReceivable.description = `Registration fees for ${pet.petName} (Updated)`;
+                await existingReceivable.save();
+              } else {
+                // Create new receivable
+                await Receivable.create({
+                  portal: 'reception',
+                  customerId: pet.clientId || undefined,
+                  patientId: pet.id || undefined,
+                  customerName: pet.ownerName || undefined,
+                  refType: 'pet_registration',
+                  refId: String(pet._id),
+                  billDate: new Date(),
+                  description: `Registration fees for ${pet.petName} (Updated)`,
+                  totalAmount: receivableCurrent,
+                  balance: receivableCurrent,
+                  status: 'open',
+                });
+              }
+            } catch (recErr) {
+              console.error('Failed to create/update receivable for pet registration update:', recErr);
+            }
+          }
+
+          // 4. Log to DailyLog for Day Session Reconciliation
+          if (cashPortion > 0) {
+            try {
+              await DailyLog.create({
+                date: new Date().toISOString().slice(0,10),
+                portal: 'reception',
+                sessionId: req.daySession?._id,
+                action: 'reception_income',
+                refType: 'pet_registration_update',
+                refId: String(pet._id),
+                description: `Income: Registration Update for ${pet.petName}`,
+                amount: cashPortion
+              });
+            } catch (logErr) {
+              console.error('DailyLog creation failed for pet registration update income:', logErr);
+            }
+          }
+        }
+      }
+    } catch (financialErr) {
+      console.error('Failed to create financial transactions for pet registration update:', financialErr?.message || financialErr);
+      // Don't fail the pet update if financial transactions fail
+    }
+    
     res.json({ success: true, data: pet });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });

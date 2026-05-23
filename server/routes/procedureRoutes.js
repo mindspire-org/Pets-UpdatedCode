@@ -1,21 +1,177 @@
 import express from 'express';
 import ProcedureRecord from '../models/ProcedureRecord.js';
-import { postReceptionProcedure } from '../utils/accountingService.js';
+import Voucher from '../models/Voucher.js';
+import Sequence from '../models/Sequence.js';
+import { postReceptionProcedure, postEntry } from '../utils/accountingService.js';
 import dayGuard from '../middleware/dayGuard.js';
 import Receivable from '../models/Receivable.js';
 import DailyLog from '../models/DailyLog.js';
+import ProcedurePlan from '../models/ProcedurePlan.js';
+import ProcedureSession from '../models/ProcedureSession.js';
 
 const router = express.Router();
+
+const fmtSeq = (n) => String(n).padStart(6, '0');
+const nextVoucherNo = async (type) => {
+  const y = new Date().getFullYear();
+  const key = `voucher:${type}:${y}`;
+  const seqDoc = await Sequence.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `${type}-${y}-${fmtSeq(seqDoc.seq || 0)}`;
+};
 
 router.post('/', dayGuard('reception'), async (req, res) => {
   try {
     const record = new ProcedureRecord(req.body);
     await record.save();
 
+    // Auto-create / append Procedure Plan + Session for Procedure Patient Details
     try {
-      await postReceptionProcedure(record.toObject());
+      console.log('Attempting auto-session creation for Pet:', record.petId);
+      const procedureName = String(record?.procedures?.[0]?.drug || 'Procedure').trim() || 'Procedure';
+      const cleanPetId = String(record.petId || '').trim();
+      
+      if (!cleanPetId) {
+        console.warn('Cannot auto-create session: petId is missing');
+      } else {
+        // Use a case-insensitive regex for the petId lookup to be safe
+        const petIdRegex = new RegExp(`^${cleanPetId}$`, 'i');
+        
+        const plan = await ProcedurePlan.findOneAndUpdate(
+          { petId: petIdRegex, procedureName, status: { $ne: 'completed' } },
+          {
+            $setOnInsert: {
+              petId: cleanPetId, // Store the exact one from record
+              clientId: String(record.clientId || '').trim(),
+              petName: String(record.petName || '').trim(),
+              ownerName: String(record.ownerName || '').trim(),
+              contact: String(record.contact || '').trim(),
+              procedureName,
+              status: 'ongoing',
+            },
+            $set: {
+              petName: String(record.petName || '').trim(),
+              ownerName: String(record.ownerName || '').trim(),
+              contact: String(record.contact || '').trim(),
+              clientId: String(record.clientId || '').trim(),
+            },
+          },
+          { new: true, upsert: true }
+        );
+
+        console.log('Plan found/created:', plan._id);
+
+        const last = await ProcedureSession.findOne({ planId: plan._id }).sort({ sessionNo: -1 }).lean();
+        const sessionNo = Math.max(1, Number(last?.sessionNo || 0) + 1);
+
+        const totalAmount = Math.max(0, Number(record.grandTotal || 0));
+        const paidAmount = Math.max(0, Number(record.receivedAmount || 0));
+        const isFullyPaid = paidAmount >= totalAmount && totalAmount > 0;
+
+        const newSession = await ProcedureSession.create({
+          planId: plan._id,
+          petId: cleanPetId,
+          sessionNo,
+          status: isFullyPaid ? 'completed' : 'planned',
+          sourceRecordId: String(record._id),
+          procedureItems: Array.isArray(record.procedures) ? record.procedures.map(p => ({
+            mainCategory: p.mainCategory,
+            subCategory: p.subCategory,
+            drug: p.drug,
+            quantity: Number(p.quantity || 0),
+            unit: p.unit,
+            amount: Number(p.amount || 0),
+          })) : [],
+          subtotal: Math.max(0, Number(record.subtotal || 0)),
+          discount: Math.max(0, Number(record.discount || 0)),
+          previousDues: Math.max(0, Number(record.previousDues || 0)),
+          paymentMethod: String(record.paymentMethod || 'Cash'),
+          totalAmount,
+          paidAmount,
+          payments: paidAmount > 0 ? [{ 
+            amount: paidAmount, 
+            method: String(record.paymentMethod || 'Cash'), 
+            note: `Payment from Procedure Record #${record._id}`, 
+            paidAt: record.createdAt || new Date() 
+          }] : [],
+        });
+        console.log('Session auto-created successfully:', newSession._id);
+      }
     } catch (e) {
-      console.error('Accounting posting failed for ProcedureRecord', e && e.message ? e.message : e);
+      console.error('CRITICAL ERROR in auto-create procedure plan/session:', e);
+    }
+
+    // 1. Create Formal Voucher for visibility in Vouchers Page
+    try {
+      const subtotal = Number(record.subtotal || 0);
+      const receivedAmount = Number(record.receivedAmount || 0);
+      const cashPortion = Math.max(0, Math.min(receivedAmount, subtotal));
+      const receivableCurrent = Math.max(0, subtotal - cashPortion);
+
+      if (cashPortion > 0 || receivableCurrent > 0) {
+        const vNo = await nextVoucherNo('RV');
+        const pm = (record.paymentMethod || 'Cash').toLowerCase();
+        const cashAcc = (pm.includes('bank') || pm.includes('card') || pm.includes('online')) ? '1002' : '1001';
+        
+        const lines = [];
+        if (cashPortion > 0) lines.push({ accountCode: cashAcc, debit: cashPortion, credit: 0 });
+        if (receivableCurrent > 0) lines.push({ accountCode: '1100', debit: receivableCurrent, credit: 0 });
+        lines.push({ accountCode: '4003', debit: 0, credit: subtotal });
+
+        const voucher = new Voucher({
+          voucherNo: vNo,
+          type: 'RV',
+          status: 'posted',
+          date: record.createdAt || new Date(),
+          portal: 'reception',
+          paymentMethod: record.paymentMethod || 'Cash',
+          description: `Reception Procedures: ${record.petName}`,
+          partyType: 'patient',
+          partyId: record.petId,
+          partyName: record.petName,
+          lines: lines,
+        });
+        await voucher.save();
+
+        // 2. Post to General Ledger via postEntry
+        await postEntry({
+          date: record.createdAt || new Date(),
+          portal: 'reception',
+          sourceType: 'reception_procedure',
+          sourceId: vNo,
+          description: `Reception Procedures: ${record.petName}`,
+          lines,
+          meta: { 
+            patientId: record.petId,
+            clientId: record.clientId,
+            portalRef: String(record._id),
+            extra: { voucherId: voucher._id }
+          }
+        });
+
+        // 3. Log to DailyLog for Day Session Reconciliation
+        if (cashPortion > 0) {
+          try {
+            await DailyLog.create({
+              date: new Date().toISOString().slice(0,10),
+              portal: 'reception',
+              sessionId: req.daySession?._id,
+              action: 'reception_income',
+              refType: 'procedure_record',
+              refId: String(record._id),
+              description: `Income: Procedures for ${record.petName}`,
+              amount: cashPortion
+            });
+          } catch (logErr) {
+            console.error('DailyLog creation failed for reception income:', logErr);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to create formal receipt voucher for procedure:', e?.message || e);
     }
 
     // Create receivable if any
@@ -120,8 +276,48 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const records = await ProcedureRecord.find(query).sort({ createdAt: -1 });
-    res.json({ success: true, data: records });
+    const records = await ProcedureRecord.find(query).sort({ createdAt: -1 }).lean();
+
+    // Fetch matching ProcedurePlans to determine status and aggregate totals
+    const petIds = [...new Set(records.map(r => r.petId).filter(Boolean))];
+    const [plans, allSessions] = await Promise.all([
+      ProcedurePlan.find({ petId: { $in: petIds } }).lean(),
+      ProcedureSession.find({ petId: { $in: petIds } }).lean()
+    ]);
+
+    const withStatus = records.map(r => {
+      // Find the plan that matches this record's drug name (approximate) or just any active plan for this pet
+      const firstDrug = r.procedures?.[0]?.drug || '';
+      const plan = plans.find(p => 
+        p.petId === r.petId && 
+        (p.procedureName === firstDrug || p.status === 'ongoing')
+      );
+
+      let totalPaid = Number(r.receivedAmount || 0);
+      let remainingDues = Number(r.receivable || 0);
+      let status = 'completed';
+
+      if (plan) {
+        status = plan.status;
+        // Aggregate totals from all sessions of this plan
+        const planSessions = allSessions.filter(s => String(s.planId) === String(plan._id));
+        const planTotal = planSessions.reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+        const planPaid = planSessions.reduce((sum, s) => sum + Number(s.paidAmount || 0), 0);
+        
+        // If this record is linked to this plan, show aggregated status
+        totalPaid = planPaid;
+        remainingDues = Math.max(0, planTotal - planPaid);
+      }
+
+      return {
+        ...r,
+        receivedAmount: totalPaid,
+        receivable: remainingDues,
+        status: status
+      };
+    });
+
+    res.json({ success: true, data: withStatus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

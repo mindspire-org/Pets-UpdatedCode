@@ -1,10 +1,12 @@
 import React, { useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
+import { useAlert } from '../../context/AlertContext'
 import { FiSettings, FiMonitor, FiShield, FiSave, FiDownload, FiUpload, FiTrash2, FiCheckCircle } from 'react-icons/fi'
 import { backupAPI } from '../../services/api'
 
 export default function Settings() {
   const { settings, save: updateSettings } = useSettings()
+  const { success: showToast, error: showErrorToast } = useAlert()
   const [activeTab, setActiveTab] = useState('company')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showSaved, setShowSaved] = useState(false)
@@ -66,7 +68,7 @@ export default function Settings() {
         }
 
         if (dataUrl.length > 1_500_000) {
-          alert('Logo bohat bara hai. Meharbani karke chhota file upload karein (max ~400KB).')
+          showErrorToast('Logo bohat bara hai. Meharbani karke chhota file upload karein (max ~400KB).')
           return
         }
 
@@ -84,7 +86,7 @@ export default function Settings() {
       setShowSaved(true)
     } catch (err) {
       console.error('Error saving settings:', err)
-      alert('Failed to save settings. Please try again.')
+      showErrorToast('Failed to save settings. Please try again.')
     }
   }
 
@@ -120,7 +122,7 @@ export default function Settings() {
         // Prefer full import via API when structure matches
         if (imported && typeof imported === 'object' && (imported.pets || imported.appointments || imported.prescriptions)) {
           await backupAPI.importAll(imported)
-          alert('Full system data imported successfully.')
+          showToast('Full system data imported successfully.')
         }
         // Also apply settings if present
         if (imported.settings || imported.companyName || imported.companyLogo) {
@@ -136,11 +138,11 @@ export default function Settings() {
           })
         }
         if (!(imported && (imported.pets || imported.appointments || imported.prescriptions))) {
-          alert('File imported as settings only. For full import, export from this system\'s Backup Now button.')
+          showToast('File imported as settings only. For full import, export from this system\'s Backup Now button.')
         }
       } catch (error) {
         console.error('Import failed', error)
-        alert('Error restoring backup. Please check the file format.')
+        showErrorToast('Error restoring backup. Please check the file format.')
       }
     }
     reader.readAsText(file)
@@ -152,7 +154,7 @@ export default function Settings() {
 
   const confirmDelete = async () => {
     try {
-      await updateSettings({})
+      await backupAPI.deleteAllData()
       setFormData({
         companyName: '',
         companyLogo: '',
@@ -162,10 +164,10 @@ export default function Settings() {
         billingFooter: ''
       })
       setShowDeleteConfirm(false)
-      alert('All data has been deleted.')
+      showToast('All data has been deleted except users and sidebar permissions.')
     } catch (err) {
       console.error('Error deleting data:', err)
-      alert('Failed to delete data. Please try again.')
+      showErrorToast('Failed to delete data. Please try again.')
     }
   }
 

@@ -14,6 +14,7 @@ export default function DoctorPatients(){
   const [viewingForm, setViewingForm] = useState(null)
   const [loadingForms, setLoadingForms] = useState(false)
   const [copiedId, setCopiedId] = useState('')
+  const [successMessage, setSuccessMessage] = useState(null)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(15)
   const navigate = useNavigate()
@@ -611,21 +612,38 @@ export default function DoctorPatients(){
                                     </div>
                                     {todayAppointment.status !== 'Completed' && (
                                       <button 
-                                        onClick={() => {
-                                          // Update appointment status to Completed
-                                          const updatedAppointments = appointments.map(apt => {
-                                            const isMatch = (
-                                              (apt.petId && apt.petId === d.id) ||
-                                              (apt.petName?.toLowerCase() === d.petName?.toLowerCase() && 
-                                               apt.ownerName?.toLowerCase() === d.ownerName?.toLowerCase())
-                                            )
-                                            if (isMatch && apt.date === todayAppointment.date) {
-                                              return { ...apt, status: 'Completed' }
+                                        onClick={async () => {
+                                          try {
+                                            // 1. Find matching appointment
+                                            const apt = appointments.find(a => {
+                                              const isMatch = (
+                                                (a.petId && a.petId === d.id) ||
+                                                (a.petName?.toLowerCase() === d.petName?.toLowerCase() && 
+                                                 a.ownerName?.toLowerCase() === d.ownerName?.toLowerCase())
+                                              )
+                                              return isMatch && a.date === todayAppointment.date
+                                            })
+
+                                            if (apt) {
+                                              // 2. Update via API
+                                              await appointmentsAPI.update(apt.id, { ...apt, status: 'Completed' })
+                                              
+                                              // 3. Update local state
+                                              const updatedAppointments = appointments.map(a => 
+                                                a.id === apt.id ? { ...a, status: 'Completed' } : a
+                                              )
+                                              setAppointments(updatedAppointments)
+                                              
+                                              // 4. Update localStorage as fallback/compatibility
+                                              localStorage.setItem('reception_appointments', JSON.stringify(updatedAppointments))
+                                              
+                                              // 5. Success notification
+                                              setSuccessMessage('Patient status updated to Completed.')
                                             }
-                                            return apt
-                                          })
-                                          localStorage.setItem('reception_appointments', JSON.stringify(updatedAppointments))
-                                          setAppointments(updatedAppointments)
+                                          } catch (err) {
+                                            console.error('Error updating appointment status:', err)
+                                            alert('Failed to update status')
+                                          }
                                         }}
                                         className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-md font-semibold transition-colors"
                                       >
@@ -1169,6 +1187,31 @@ export default function DoctorPatients(){
                   <div>Date: <span className="font-semibold">{new Date(viewingForm.createdAt).toLocaleString()}</span></div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Message Dialog */}
+      {successMessage && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={()=>setSuccessMessage(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-6 py-4">
+              <div className="flex items-center justify-center">
+                <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+                  <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/></svg>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6 text-center">
+              <div className="text-slate-700 font-semibold text-lg mb-4">{successMessage}</div>
+              <button
+                onClick={()=>setSuccessMessage(null)}
+                className="h-10 px-6 rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
+              >
+                OK
+              </button>
             </div>
           </div>
         </div>

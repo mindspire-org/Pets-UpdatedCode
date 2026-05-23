@@ -14,7 +14,7 @@ const norm = (v) => String(v || '').trim()
 const toNum = (v) => {
   if (v == null) return 0
   const n = typeof v === 'string' ? Number(v.replace(/,/g, '')) : Number(v)
-  return Number.isNaN(n) ? 0 : n
+  return Number.isNaN(n) ? 0 : Math.round(n * 100) / 100
 }
 
 async function aggregateForClient(clientIdRaw) {
@@ -46,7 +46,7 @@ async function aggregateForClient(clientIdRaw) {
     lab: { billed: 0, received: 0, pending: 0, invoices: 0 },
     radiology: { billed: 0, received: 0, pending: 0, invoices: 0 },
     petShop: { billed: 0, received: 0, pending: 0, invoices: 0 },
-    consultant: { amount: 0, paidCount: 0 }
+    consultant: { billed: 0, received: 0, pending: 0, paidCount: 0 }
   }
 
   // Totals imported via Excel as opening balances should NOT be attributed to any module.
@@ -68,7 +68,7 @@ async function aggregateForClient(clientIdRaw) {
           lab: { billed: 0, received: 0, pending: 0, invoices: 0 },
           radiology: { billed: 0, received: 0, pending: 0, invoices: 0 },
           petShop: { billed: 0, received: 0, pending: 0, invoices: 0 },
-          consultant: { amount: 0, paid: false, date: '' }
+          consultant: { amount: 0, received: 0, pending: 0, paid: false, date: '' }
         },
         totals: { billed: 0, received: 0, pending: 0 }
       }
@@ -235,19 +235,28 @@ async function aggregateForClient(clientIdRaw) {
   })
 
   // Consultant (from Financial records and Pet registrations)
-  let consultantTotal = 0
+  let consultantBilled = 0
+  let consultantReceived = 0
+  let consultantPending = 0
   fin.forEach(f => {
-    consultantTotal += toNum(f.amount)
+    const amt = toNum(f.amount)
+    consultantBilled += amt
+    consultantReceived += amt
     const pet = petById.get(norm(f.petId))
     if (pet) {
       const slot = ensurePet(pet)
-      slot.modules.consultant.amount += toNum(f.amount)
+      slot.modules.consultant.amount += amt
+      slot.modules.consultant.received += amt
+      slot.modules.consultant.pending += 0
       slot.modules.consultant.paid = true
       slot.modules.consultant.date = f.date || f.createdAt
-      updateLast(f.date || f.createdAt, toNum(f.amount), 'Consultation', f._id || f.id, norm(pet.id || pet._id))
+      slot.totals.billed += amt
+      slot.totals.received += amt
+      slot.totals.pending += 0
+      updateLast(f.date || f.createdAt, amt, 'Consultation', f._id || f.id, norm(pet.id || pet._id))
       // Also surface consultation as a ledger entry for UI consistency
       const pid = norm(pet.id || pet._id)
-      entries.push({ type: 'Consultation', id: f._id || f.id, date: f.date || f.createdAt, amount: toNum(f.amount), received: toNum(f.amount), pending: 0, petId: pid, petName: pet.petName || '', mode: f.paymentMethod || '—' })
+      entries.push({ type: 'Consultation', id: f._id || f.id, date: f.date || f.createdAt, amount: amt, received: amt, pending: 0, petId: pid, petName: pet.petName || '', mode: f.paymentMethod || '—' })
       consultPaidByPet.add(pid)
     }
   })
@@ -255,30 +264,43 @@ async function aggregateForClient(clientIdRaw) {
   // Fallback via pet registration fees
   pets.forEach(p => {
     const fee = toNum(p.details?.clinic?.consultantFees)
+    const received = toNum(p.details?.clinic?.receivedAmount)
+    const pending = Math.max(0, fee - received)
     if (fee > 0) {
       const pid = norm(p.id || p._id)
       if (!consultPaidByPet.has(pid)) {
-        consultantTotal += fee
+        consultantBilled += fee
+        consultantReceived += received
+        consultantPending += pending
         const slot = ensurePet(p)
         slot.modules.consultant.amount += fee
-        slot.modules.consultant.paid = true
+        slot.modules.consultant.received += received
+        slot.modules.consultant.pending += pending
+        slot.modules.consultant.paid = pending <= 0
         slot.modules.consultant.date = p.details?.clinic?.dateOfRegistration || p.createdAt
-        updateLast(slot.modules.consultant.date, fee, 'Consultation', p._id || p.id, pid)
+        slot.totals.billed += fee
+        slot.totals.received += received
+        slot.totals.pending += pending
+        if (received > 0) {
+          updateLast(slot.modules.consultant.date, received, 'Consultation', p._id || p.id, pid)
+        }
         // Add a best-effort entry so UIs can reflect Paid immediately
-        entries.push({ type: 'Consultation', id: p._id || p.id, date: slot.modules.consultant.date, amount: fee, received: fee, pending: 0, petId: pid, petName: p.petName || '', mode: '—' })
+        entries.push({ type: 'Consultation', id: p._id || p.id, date: slot.modules.consultant.date, amount: fee, received, pending, petId: pid, petName: p.petName || '', mode: p.details?.clinic?.paymentMethod || '—' })
         consultPaidByPet.add(pid)
       }
     }
   })
-  modules.consultant.amount = consultantTotal
+  modules.consultant.billed = consultantBilled
+  modules.consultant.received = consultantReceived
+  modules.consultant.pending = consultantPending
   modules.consultant.paidCount = Object.values(perPet).filter(s => s.modules.consultant.paid).length
 
   const currentDue = toNum(dueRow?.previousDue)
 
   const totals = {
-    totalBilled: modules.pharmacy.billed + modules.procedures.billed + modules.lab.billed + modules.radiology.billed + modules.petShop.billed + modules.consultant.amount + imported.billed,
-    totalReceived: modules.pharmacy.received + modules.procedures.received + modules.lab.received + modules.radiology.received + modules.petShop.received + modules.consultant.amount + imported.received,
-    totalPending: modules.pharmacy.pending + modules.procedures.pending + modules.lab.pending + modules.radiology.pending + modules.petShop.pending + imported.pending,
+    totalBilled: modules.pharmacy.billed + modules.procedures.billed + modules.lab.billed + modules.radiology.billed + modules.petShop.billed + modules.consultant.billed + imported.billed,
+    totalReceived: modules.pharmacy.received + modules.procedures.received + modules.lab.received + modules.radiology.received + modules.petShop.received + modules.consultant.received + imported.received,
+    totalPending: modules.pharmacy.pending + modules.procedures.pending + modules.lab.pending + modules.radiology.pending + modules.petShop.pending + modules.consultant.pending + imported.pending,
     totalInvoices: modules.pharmacy.invoices + modules.procedures.invoices + modules.lab.invoices + modules.radiology.invoices + modules.petShop.invoices,
     lastPayment: lastPayment,
     currentDue

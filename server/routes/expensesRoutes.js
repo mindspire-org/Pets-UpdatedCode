@@ -1,10 +1,24 @@
 import express from 'express';
 import Expense from '../models/Expense.js';
-import { postFinancialRecord } from '../utils/accountingService.js';
+import Voucher from '../models/Voucher.js';
+import Sequence from '../models/Sequence.js';
+import { postFinancialRecord, postEntry } from '../utils/accountingService.js';
 import dayGuard from '../middleware/dayGuard.js';
 import DailyLog from '../models/DailyLog.js';
 
 const router = express.Router();
+
+const fmtSeq = (n) => String(n).padStart(6, '0');
+const nextVoucherNo = async (type) => {
+  const y = new Date().getFullYear();
+  const key = `voucher:${type}:${y}`;
+  const seqDoc = await Sequence.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `${type}-${y}-${fmtSeq(seqDoc.seq || 0)}`;
+};
 
 // GET /api/expenses - list all expenses (latest first)
 router.get('/', async (req, res) => {
@@ -91,22 +105,65 @@ router.post('/', dayGuard(req => req.body.portal || 'admin'), async (req, res) =
     const expense = new Expense(payload);
     await expense.save();
 
-    // Fire-and-forget accounting posting; errors should not block
+    // 1. Create Formal Voucher for visibility in Vouchers Page
     try {
-      await postFinancialRecord({
-        id: expense.id,
-        type: 'Expense',
-        category: expense.category,
-        amount: expense.amount,
-        date: expense.date,
-        paymentMethod: expense.paymentMethod,
-        ownerName: undefined,
-        petId: undefined,
-        petName: undefined,
+      const vNo = await nextVoucherNo('PV');
+      const pm = (expense.paymentMethod || 'Cash').toLowerCase();
+      const cashAcc = (pm.includes('bank') || pm.includes('card') || pm.includes('online')) ? '1002' : '1001';
+      
+      // Map category to an expense account code if possible, or use a default
+      // This logic should ideally match postFinancialRecord
+      let expAccount = '5999'; // Default General Expense
+      const cat = (expense.category || '').toLowerCase();
+      if (cat.includes('salary')) expAccount = '6000';
+      else if (cat.includes('rent') || cat.includes('utility')) expAccount = '6100';
+      else if (cat.includes('travel')) expAccount = '5910';
+      else if (cat.includes('food')) expAccount = '5920';
+
+      const voucher = new Voucher({
+        voucherNo: vNo,
+        type: 'PV',
+        status: 'posted',
+        date: expense.date || new Date(),
         portal: expense.portal || 'admin',
+        paymentMethod: expense.paymentMethod || 'Cash',
+        description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ''}`,
+        partyType: expense.vendorId ? 'supplier' : 'none',
+        partyId: expense.vendorId,
+        partyName: expense.vendorName,
+        expenseCategory: expense.category,
+        lines: [
+          { accountCode: expAccount, debit: expense.amount, credit: 0 },
+          { accountCode: cashAcc, debit: 0, credit: expense.amount },
+        ],
       });
+      await voucher.save();
+
+      // 2. Journal Entry for Accounting Ledger
+      await postEntry({
+        date: expense.date || new Date(),
+        portal: expense.portal || 'admin',
+        sourceType: 'financial_expense',
+        sourceId: vNo,
+        description: `Expense: ${expense.category}`,
+        lines: [
+          { accountCode: expAccount, debit: expense.amount, credit: 0 },
+          { accountCode: cashAcc, debit: 0, credit: expense.amount },
+        ],
+        meta: { 
+          portalRef: expense.id,
+          extra: { 
+            expenseId: String(expense._id),
+            category: expense.category, 
+            paymentMethod: expense.paymentMethod,
+            voucherId: voucher._id 
+          } 
+        },
+      });
+      
+      // Link JE back to voucher (if needed, though postEntry doesn't return ID easily here without modification)
     } catch (e) {
-      console.error('Accounting posting failed for Expense', e?.message || e);
+      console.error('Failed to create formal voucher/ledger for expense:', e?.message || e);
     }
 
     try {

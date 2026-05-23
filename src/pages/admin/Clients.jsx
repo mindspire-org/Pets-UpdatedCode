@@ -322,9 +322,11 @@ export default function AdminClients() {
     let allSales = []
     let allProcedures = []
     let allDues = []
+    let allPets = []
     try { const s = await pharmacySalesAPI.getAll(); allSales = s.data || [] } catch {}
     try { const p = await proceduresAPI.getAll('?includeImported=true'); allProcedures = p.data || [] } catch {}
     try { const d = await pharmacyDuesAPI.getAll(); allDues = d.data || [] } catch {}
+    try { const pt = await petsAPI.getAll(); allPets = pt.data || [] } catch {}
 
     const salesByClient = allSales.reduce((acc, s) => {
       const cid = (s.clientId || '').trim();
@@ -345,6 +347,13 @@ export default function AdminClients() {
       if (!cid) return acc;
       acc[cid] = row;
       return acc;
+    }, {})
+    const petsByClient = allPets.reduce((acc, pet) => {
+      const cid = (pet.clientId || pet.details?.owner?.clientId || '').trim()
+      if (!cid) return acc
+      if (!acc[cid]) acc[cid] = []
+      acc[cid].push(pet)
+      return acc
     }, {})
 
     for (const client of (clientsList || [])) {
@@ -373,13 +382,24 @@ export default function AdminClients() {
         const calcDue = Math.max(0, gt - recv)
         due = toNum(r.receivable!=null ? r.receivable : calcDue)
       }
-      const storedDue = toNum(dueRow?.previousDue)
-      duesMap[cid] = storedDue > 0 ? storedDue : due
-
       const paidSales = (salesByClient[cid]||[]).reduce((sum, row)=> sum + Math.max(0, toNum(row.receivedAmount!=null ? row.receivedAmount : row.totalAmount)), 0)
       const paidProcs = (procsByClient[cid]||[]).reduce((sum, row)=> sum + Math.max(0, toNum(row.receivedAmount)), 0)
+      const totalRegPaid = (petsByClient[cid]||[]).reduce((sum, pet)=> sum + Math.max(0, toNum(pet.details?.clinic?.receivedAmount)), 0)
+      const totalRegPending = (petsByClient[cid]||[]).reduce((sum, pet)=> {
+        const fee = toNum(pet.details?.clinic?.consultantFees)
+        const recv = toNum(pet.details?.clinic?.receivedAmount)
+        return sum + Math.max(0, fee - recv)
+      }, 0)
+      const storedDue = toNum(dueRow?.previousDue)
+      const baseDue = storedDue > 0 ? storedDue : due
+      
+      // Fix: Avoid double-counting consultation fees
+      // If storedDue exists, it already includes consultation fee dues from pet registration
+      // So we should use either storedDue OR (baseDue + totalRegPending), not both
+      duesMap[cid] = storedDue > 0 ? storedDue : (baseDue + totalRegPending)
+
       const storedPaid = toNum(dueRow?.totalPaid)
-      paymentsMap[cid] = storedPaid + paidSales + paidProcs
+      paymentsMap[cid] = storedPaid + paidSales + paidProcs + totalRegPaid
     }
 
     setClientDues(duesMap)

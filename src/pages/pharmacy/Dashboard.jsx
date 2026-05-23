@@ -6,7 +6,13 @@ import { pharmacyMedicinesAPI, pharmacySalesAPI, pharmacyReportsAPI } from '../.
 import ExpenseCard from '../../components/ExpenseCard';
 import DateRangePicker from '../../components/DateRangePicker';
 
-export default function PharmacyDashboard() {
+export default function PharmacyDashboard({
+  basePath = '/pharmacy',
+  apis,
+} = {}) {
+  const medicinesAPI = apis?.medicines || pharmacyMedicinesAPI;
+  const salesAPI = apis?.sales || pharmacySalesAPI;
+  const reportsAPI = apis?.reports || pharmacyReportsAPI;
   const [stats, setStats] = useState({
     totalMedicines: 0,
     lowStock: 0,
@@ -53,11 +59,12 @@ export default function PharmacyDashboard() {
       // Fetch data with individual error handling
       let totalMedicines = 0, lowStock = 0, expiring = 0, expired = 0;
       let todaySales = 0, todayRevenue = 0, inventoryValue = 0, inventoryCost = 0;
+      let todayCost = 0, todayProfit = 0;
       let sales = [];
 
       // Get medicines data
       try {
-        const medicinesRes = await pharmacyMedicinesAPI.getAll();
+        const medicinesRes = await medicinesAPI.getAll();
         // Handle both { data: [...] } and { data: { data: [...] } } formats
         const medicines = medicinesRes?.data?.data || medicinesRes?.data || [];
         totalMedicines = medicines.length;
@@ -108,7 +115,7 @@ export default function PharmacyDashboard() {
 
       // Get sales data
       try {
-        const salesRes = await pharmacySalesAPI.getAll();
+        const salesRes = await salesAPI.getAll();
         // Handle both { data: [...] } and { data: { data: [...] } } formats
         sales = salesRes?.data?.data || salesRes?.data || [];
         
@@ -123,8 +130,8 @@ export default function PharmacyDashboard() {
         todayRevenue = filteredSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
         
         // Calculate profit and cost for the date range
-        let todayCost = 0;
-        let todayProfit = 0;
+        todayCost = 0;
+        todayProfit = 0;
         
         filteredSales.forEach(sale => {
           // Use stored totalCost if available
@@ -171,9 +178,9 @@ export default function PharmacyDashboard() {
   };
 
   const quickLinks = [
-    { name: 'Medicine Inventory', path: '/pharmacy/medicines', icon: FiPackage, color: 'purple', description: 'Manage medicines & stock' },
-    { name: 'Point of Sale', path: '/pharmacy/pos', icon: FiShoppingCart, color: 'blue', description: 'Sell medicines' },
-    { name: 'Sales Reports', path: '/pharmacy/reports', icon: FiFileText, color: 'green', description: 'View sales analytics' },
+    { name: 'Medicine Inventory', path: `${basePath}/medicines`, icon: FiPackage, color: 'purple', description: 'Manage medicines & stock' },
+    { name: 'Point of Sale', path: `${basePath}/pos`, icon: FiShoppingCart, color: 'blue', description: 'Sell medicines' },
+    { name: 'Sales Reports', path: `${basePath}/reports`, icon: FiFileText, color: 'green', description: 'View sales analytics' },
   ];
 
   return (
@@ -427,7 +434,7 @@ export default function PharmacyDashboard() {
                     )}
                   </div>
                   <Link
-                    to="/pharmacy/medicines"
+                    to={`${basePath}/medicines`}
                     className="inline-block mt-3 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium transition-colors"
                   >
                     View Inventory

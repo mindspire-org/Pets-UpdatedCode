@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FiPlus, FiSearch, FiFileText, FiTrash2, FiEdit2, FiX, 
-  FiCheck, FiDownload, FiSend, FiClock, FiAlertCircle, FiPrinter 
+  FiCheck, FiDownload, FiClock, FiAlertCircle, FiPrinter 
 } from 'react-icons/fi';
 import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   purchaseOrdersAPI, 
   suppliersAPI, 
@@ -26,7 +28,7 @@ export default function PurchaseOrders() {
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [itemsPerPage, setItemsPerPage] = useState(12);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [orderToDelete, setOrderToDelete] = useState(null);
@@ -222,7 +224,7 @@ export default function PurchaseOrders() {
 
   const [showStatusDropdown, setShowStatusDropdown] = useState(null);
 
-  const statusOptions = ['Pending', 'Sent', 'Completed', 'Delivered', 'Cancelled'];
+  const statusOptions = ['Pending', 'Sent', 'Received', 'Cancelled'];
 
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
@@ -271,40 +273,203 @@ export default function PurchaseOrders() {
 
   const handleDownload = (order) => {
     try {
-      const exportData = order.items.map(item => ({
-        'Item Name': item.medicineName,
-        'Category': item.category,
-        'Quantity': item.quantity,
-        'Unit': item.unit
-      }));
-
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Purchase Order");
-
-      // Add header info
-      XLSX.utils.sheet_add_aoa(ws, [
-        ["Purchase Order", order.poNumber],
-        ["Date", new Date(order.date).toLocaleDateString()],
-        ["Supplier", order.supplierName],
-        ["Phone", order.supplierPhone],
-        ["", ""], // spacer
-      ], { origin: "A1" });
-
-      XLSX.writeFile(wb, `${order.poNumber}_PurchaseOrder.xlsx`);
+      // Create new PDF document
+      const doc = new jsPDF();
+      
+      // Set font
+      doc.setFont('helvetica');
+      
+      // Header
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PURCHASE ORDER', 20, 30);
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(order.poNumber, 20, 40);
+      
+      // Add a line
+      doc.setLineWidth(0.5);
+      doc.line(20, 45, 190, 45);
+      
+      // Supplier Information
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text('SUPPLIER INFORMATION', 20, 60);
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(order.supplierName, 20, 70);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      if (order.companyName) {
+        doc.text(order.companyName, 20, 78);
+      }
+      if (order.supplierPhone) {
+        doc.text(order.supplierPhone, 20, 86);
+      }
+      
+      // Delivery Address
+      if (order.deliveryAddress) {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text('DELIVERY ADDRESS', 20, 100);
+        
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(order.deliveryAddress, 20, 110);
+      }
+      
+      // Order Details (Right side)
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Order Date:', 130, 70);
+      doc.setFont('helvetica', 'normal');
+      doc.text(new Date(order.date).toLocaleDateString(), 170, 70);
+      
+      if (order.expectedDelivery) {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Expected Delivery:', 130, 78);
+        doc.setFont('helvetica', 'normal');
+        doc.text(new Date(order.expectedDelivery).toLocaleDateString(), 170, 78);
+      }
+      
+      // Items Table - Using autoTable plugin
+      const tableData = order.items.map((item, index) => [
+        String(index + 1).padStart(2, '0'),
+        item.medicineName,
+        item.category || '',
+        item.quantity.toString(),
+        item.unit.toUpperCase()
+      ]);
+      
+      // Try to use autoTable, fallback to manual table if it fails
+      try {
+        autoTable(doc, {
+          startY: 120,
+          head: [['#', 'DESCRIPTION / ITEM NAME', 'CATEGORY', 'QUANTITY', 'UNIT']],
+          body: tableData,
+          theme: 'grid',
+          headStyles: {
+            fillColor: [51, 51, 51],
+            textColor: [255, 255, 255],
+            fontSize: 8,
+            fontStyle: 'bold',
+            halign: 'left'
+          },
+          bodyStyles: {
+            fontSize: 9,
+            textColor: [51, 51, 51]
+          },
+          columnStyles: {
+            0: { halign: 'center', cellWidth: 15 },
+            1: { halign: 'left', cellWidth: 80 },
+            2: { halign: 'left', cellWidth: 40 },
+            3: { halign: 'right', cellWidth: 25 },
+            4: { halign: 'right', cellWidth: 25 }
+          },
+          margin: { left: 20, right: 20 }
+        });
+        
+        // Get the final Y position after the table
+        var finalY = doc.lastAutoTable.finalY + 20;
+        
+      } catch (autoTableError) {
+        console.warn('AutoTable failed, using manual table:', autoTableError);
+        
+        // Manual table fallback
+        let currentY = 120;
+        
+        // Table header
+        doc.setFillColor(51, 51, 51);
+        doc.rect(20, currentY, 170, 10, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text('#', 25, currentY + 7);
+        doc.text('DESCRIPTION / ITEM NAME', 40, currentY + 7);
+        doc.text('CATEGORY', 120, currentY + 7);
+        doc.text('QTY', 150, currentY + 7);
+        doc.text('UNIT', 170, currentY + 7);
+        
+        currentY += 10;
+        
+        // Table rows
+        doc.setTextColor(51, 51, 51);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        
+        order.items.forEach((item, index) => {
+          doc.text(String(index + 1).padStart(2, '0'), 25, currentY + 7);
+          doc.text(item.medicineName, 40, currentY + 7);
+          doc.text(item.category || '', 120, currentY + 7);
+          doc.text(item.quantity.toString(), 150, currentY + 7);
+          doc.text(item.unit.toUpperCase(), 170, currentY + 7);
+          
+          // Add row border
+          doc.setDrawColor(200, 200, 200);
+          doc.line(20, currentY + 10, 190, currentY + 10);
+          
+          currentY += 10;
+        });
+        
+        var finalY = currentY + 20;
+      }
+      
+      // Notes and Terms (if available)
+      if (order.notes || order.terms) {
+        if (order.notes) {
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'bold');
+          doc.text('ORDER NOTES', 20, finalY);
+          
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          const notesLines = doc.splitTextToSize(order.notes, 80);
+          doc.text(notesLines, 20, finalY + 8);
+          finalY += 8 + (notesLines.length * 4);
+        }
+        
+        if (order.terms) {
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'bold');
+          doc.text('TERMS & CONDITIONS', 110, finalY - (order.notes ? 20 : 0));
+          
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          const termsLines = doc.splitTextToSize(order.terms, 80);
+          doc.text(termsLines, 110, finalY - (order.notes ? 12 : -8));
+        }
+      }
+      
+      // Signatures section
+      const signatureY = Math.max(finalY + 30, 240);
+      
+      // Prepared By
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(currentUser?.name || '...........................', 20, signatureY);
+      doc.line(20, signatureY + 5, 80, signatureY + 5);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PREPARED BY', 20, signatureY + 12);
+      
+      // Authorized Signature
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(order.authorizedBy || '...........................', 130, signatureY);
+      doc.line(130, signatureY + 5, 190, signatureY + 5);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text('AUTHORIZED SIGNATURE', 130, signatureY + 12);
+      
+      // Save the PDF
+      doc.save(`${order.poNumber}_PurchaseOrder.pdf`);
+      
     } catch (err) {
-      console.error('Export failed:', err);
-      alert('Export failed');
-    }
-  };
-
-  const handleSend = async (order) => {
-    if (order.status !== 'Pending') return;
-    try {
-      await purchaseOrdersAPI.update(order._id, { ...order, status: 'Sent' });
-      fetchOrders();
-    } catch (err) {
-      console.error('Error updating status:', err);
+      console.error('PDF generation failed:', err);
+      alert('PDF generation failed: ' + err.message);
     }
   };
 
@@ -475,9 +640,7 @@ export default function PurchaseOrders() {
     switch (status) {
       case 'Pending': return 'bg-amber-100 text-amber-600';
       case 'Sent': return 'bg-blue-100 text-blue-600';
-      case 'Delivered': return 'bg-indigo-100 text-indigo-600';
-      case 'Completed': return 'bg-green-100 text-green-600';
-      case 'Received': return 'bg-emerald-100 text-emerald-600';
+      case 'Received': return 'bg-green-100 text-green-600';
       case 'Cancelled': return 'bg-red-100 text-red-600';
       default: return 'bg-slate-100 text-slate-600';
     }
@@ -522,136 +685,188 @@ export default function PurchaseOrders() {
               onChange={(e) => setItemsPerPage(Number(e.target.value))}
               className="px-2 py-1 bg-slate-50 border border-slate-200 rounded text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {[10, 25, 50, 100].map(n => (
+              {[12, 24, 48, 96].map(n => (
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100">
-                <th className="px-6 py-4 text-left font-bold text-slate-600">PO Number</th>
-                <th className="px-6 py-4 text-left font-bold text-slate-600">Date</th>
-                <th className="px-6 py-4 text-left font-bold text-slate-600">Supplier</th>
-                <th className="px-6 py-4 text-left font-bold text-slate-600">Items</th>
-                <th className="px-6 py-4 text-left font-bold text-slate-600">Status</th>
-                <th className="px-6 py-4 text-right font-bold text-slate-600">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr>
-                  <td colSpan="6" className="py-20 text-center">
-                    <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  </td>
-                </tr>
-              ) : filteredOrders.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="py-20 text-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <FiFileText className="w-12 h-12 text-slate-200" />
-                      <p className="font-bold text-slate-400">No purchase orders found</p>
+        {/* Card Grid Layout */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {loading ? (
+            // Loading skeleton cards
+            Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-pulse">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-start">
+                    <div className="h-4 bg-slate-200 rounded w-24"></div>
+                    <div className="h-6 bg-slate-200 rounded-full w-16"></div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-3 bg-slate-200 rounded w-32"></div>
+                    <div className="h-3 bg-slate-200 rounded w-28"></div>
+                  </div>
+                  <div className="flex justify-between items-center pt-4">
+                    <div className="h-3 bg-slate-200 rounded w-20"></div>
+                    <div className="flex gap-2">
+                      <div className="h-8 w-8 bg-slate-200 rounded"></div>
+                      <div className="h-8 w-8 bg-slate-200 rounded"></div>
+                      <div className="h-8 w-8 bg-slate-200 rounded"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : filteredOrders.length === 0 ? (
+            <div className="col-span-full py-20 text-center">
+              <div className="flex flex-col items-center gap-3">
+                <FiFileText className="w-12 h-12 text-slate-200" />
+                <p className="font-bold text-slate-400">No purchase orders found</p>
+                <button 
+                  onClick={() => { resetForm(); setShowAddModal(true); }}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all"
+                >
+                  <FiPlus /> Create New Order
+                </button>
+              </div>
+            </div>
+          ) : (
+            paginatedOrders.map((order) => (
+              <div key={order._id} className="bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all group">
+                <div className="p-6">
+                  {/* Header */}
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-lg">{order.poNumber}</h3>
+                      <p className="text-sm text-slate-500">{new Date(order.date).toLocaleDateString()}</p>
+                    </div>
+                    <div className="relative">
                       <button 
-                        onClick={() => { resetForm(); setShowAddModal(true); }}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all"
+                        data-order-id={order._id}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newState = showStatusDropdown === order._id ? null : order._id;
+                          setShowStatusDropdown(newState);
+                        }}
+                        className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all hover:shadow-md cursor-pointer ${getStatusColor(order.status)} ${showStatusDropdown === order._id ? 'ring-2 ring-blue-300' : ''}`}
                       >
-                        <FiPlus /> Create New Order
+                        {order.status}
+                      </button>
+                      
+                      {showStatusDropdown === order._id && (
+                        <>
+                          <div 
+                            className="fixed inset-0 z-[65]" 
+                            onClick={() => setShowStatusDropdown(null)}
+                          ></div>
+                          <div className="absolute right-0 mt-2 w-40 bg-white border border-slate-200 rounded-xl shadow-2xl z-[70] overflow-hidden">
+                            <div className="p-1.5 space-y-0.5">
+                              <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Update Status</span>
+                              </div>
+                              {statusOptions.map((status) => (
+                                <button
+                                  key={status}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    updateOrderStatus(order._id, status);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors ${
+                                    order.status === status 
+                                      ? 'bg-blue-50 text-blue-600' 
+                                      : 'text-slate-600 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    {status}
+                                    {order.status === status && <FiCheck className="w-3 h-3" />}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Supplier Info */}
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Supplier</span>
+                    </div>
+                    <p className="font-bold text-slate-700">{order.supplierName}</p>
+                    {order.supplierPhone && (
+                      <p className="text-sm text-slate-500">{order.supplierPhone}</p>
+                    )}
+                  </div>
+
+                  {/* Items Count */}
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Items</span>
+                    </div>
+                    <p className="text-slate-600 font-medium">{order.items?.length || 0} items</p>
+                  </div>
+
+                  {/* Expected Delivery */}
+                  {order.expectedDelivery && (
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <FiClock className="w-3 h-3 text-slate-400" />
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Expected</span>
+                      </div>
+                      <p className="text-sm text-slate-600">{new Date(order.expectedDelivery).toLocaleDateString()}</p>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => handleDownload(order)}
+                        className="p-2 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-all" 
+                        title="Download PDF"
+                      >
+                        <FiDownload className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => handlePrint(order)}
+                        className="p-2 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all" 
+                        title="Print Purchase Order"
+                      >
+                        <FiPrinter className="w-4 h-4" />
                       </button>
                     </div>
-                  </td>
-                </tr>
-              ) : (
-                paginatedOrders.map((order) => (
-                  <tr key={order._id} className="hover:bg-slate-50 transition-all group">
-                    <td className="px-6 py-4 font-bold text-slate-700">{order.poNumber}</td>
-                    <td className="px-6 py-4 text-slate-500">{new Date(order.date).toLocaleDateString()}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-700">{order.supplierName}</span>
-                        <span className="text-xs text-slate-400">{order.supplierPhone}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-slate-500 font-medium">{order.items?.length || 0} items</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${getStatusColor(order.status)}`}>
-                        {order.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="relative">
-                          <button 
-                            onClick={() => setShowStatusDropdown(showStatusDropdown === order._id ? null : order._id)}
-                            className={`p-2 rounded-lg transition-all ${showStatusDropdown === order._id ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'}`}
-                            title="Update Status"
-                          >
-                            <FiSend className="w-4 h-4" />
-                          </button>
-                          
-                          {showStatusDropdown === order._id && (
-                            <>
-                              <div 
-                                className="fixed inset-0 z-[65]" 
-                                onClick={() => setShowStatusDropdown(null)}
-                              ></div>
-                              <div className="absolute right-0 mt-2 w-40 bg-white border border-slate-200 rounded-xl shadow-2xl z-[70] overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
-                                <div className="p-1.5 space-y-0.5">
-                                  <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
-                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Update Status</span>
-                                  </div>
-                                  {statusOptions.map((status) => (
-                                    <button
-                                      key={status}
-                                      onClick={() => updateOrderStatus(order._id, status)}
-                                      className={`w-full text-left px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors ${
-                                        order.status === status 
-                                          ? 'bg-blue-50 text-blue-600' 
-                                          : 'text-slate-600 hover:bg-slate-50'
-                                      }`}
-                                    >
-                                      <div className="flex items-center justify-between">
-                                        {status}
-                                        {order.status === status && <FiCheck className="w-3 h-3" />}
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </>
-                          )}
-                        </div>
-
-                        <button 
-                          onClick={() => handleDownload(order)}
-                          className="p-2 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-all" 
-                          title="Download Excel"
-                        >
-                          <FiDownload className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => handlePrint(order)}
-                          className="p-2 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all" 
-                          title="Print Purchase Order"
-                        >
-                          <FiPrinter className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleEdit(order)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"><FiEdit2 className="w-4 h-4" /></button>
-                        <button onClick={() => confirmDelete(order)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"><FiTrash2 className="w-4 h-4" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => handleEdit(order)} 
+                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                        title="Edit Order"
+                      >
+                        <FiEdit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => confirmDelete(order)} 
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        title="Delete Order"
+                      >
+                        <FiTrash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Pagination */}
         {filteredOrders.length > itemsPerPage && (
-          <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/30">
+          <div className="flex items-center justify-between px-6 py-4 bg-white rounded-xl border border-slate-200 shadow-sm mt-6">
             <p className="text-sm text-slate-500">
               Showing{" "}
               <span className="font-bold text-slate-700">

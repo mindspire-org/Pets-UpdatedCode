@@ -9,6 +9,17 @@ export default function AdminLogin() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { addActivity } = useActivity()
+
+  const normalizeSidebarPermissions = (sp) => {
+    if (!sp) return {}
+    if (typeof sp?.entries === 'function') {
+      try {
+        return Object.fromEntries(sp.entries())
+      } catch {}
+    }
+    if (typeof sp === 'object' && !Array.isArray(sp)) return sp
+    return {}
+  }
   
   const handleSubmit = async ({ username, password }) => {
     try {
@@ -20,15 +31,24 @@ export default function AdminLogin() {
       
       if (response && response.data) {
         const user = response.data
+        const userRole = user.role?.toLowerCase()
         
         // Check if user has admin role
-        if (user.role === 'admin' || user.role === 'Admin') {
+        if (userRole === 'admin') {
+          // Check if user has admin portal access
+          const hasPortalAccess = user.portalAccess?.map(p => p.toLowerCase()).includes('admin')
+          if (!hasPortalAccess) {
+            setError('Access denied. You do not have permission to access the Admin Portal. Contact your administrator.')
+            return
+          }
+          
           localStorage.setItem('portal', 'admin')
           localStorage.setItem('admin_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role,
-            sidebarPermissions: user.sidebarPermissions || {}
+            role: user.role, // Keep original casing for display
+            sidebarPermissions: normalizeSidebarPermissions(user.sidebarPermissions),
+            portalAccess: user.portalAccess || []
           }))
           try { addActivity({ user: 'Admin', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/admin')
@@ -40,31 +60,7 @@ export default function AdminLogin() {
       }
     } catch (err) {
       console.error('Login error:', err)
-      
-      // Fallback to localStorage if API fails
-      try {
-        const storedUsers = JSON.parse(localStorage.getItem('admin_users') || '[]')
-        const user = storedUsers.find(u => 
-          u.username === username && 
-          u.password === password && 
-          (u.role === 'Admin' || u.role === 'admin')
-        )
-        
-        if (user) {
-          localStorage.setItem('portal', 'admin')
-          localStorage.setItem('admin_auth', JSON.stringify({ 
-            username: user.username,
-            name: user.name,
-            role: user.role
-          }))
-          try { addActivity({ user: 'Admin', text: `Login successful: ${user.username}` }) } catch {}
-          navigate('/admin')
-        } else {
-          setError('Invalid username or password')
-        }
-      } catch (fallbackErr) {
-        setError('Login failed. Please try again.')
-      }
+      setError('Invalid username or password')
     } finally {
       setLoading(false)
     }

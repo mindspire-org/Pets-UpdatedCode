@@ -10,7 +10,7 @@ import {
   FiPrinter,
   FiClock,
 } from "react-icons/fi";
-import { pharmacyHistoryAPI, settingsAPI } from "../../services/api";
+import { pharmacyHistoryAPI, settingsAPI, pharmacyMedicinesAPI } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
 import Modal from "../../components/Modal";
 
@@ -144,6 +144,49 @@ export default function SalesReturn() {
         }),
         totalReturnAmount: returnTotal,
       });
+
+      // ── UPDATE INVENTORY STOCK ──────────────────────────────────────────
+      // Add returned quantities back to medicine inventory
+      for (const item of itemsToReturn) {
+        try {
+          // Get current medicine data
+          const medicineRes = await pharmacyMedicinesAPI.getById(item.medicineId);
+          const currentMedicine = medicineRes.data;
+          
+          if (currentMedicine) {
+            // Calculate new stock based on sellBy type
+            let newStock;
+            if (item.sellBy?.toLowerCase() === 'pack') {
+              // If sold by pack, add returned quantity to pack stock
+              const currentPacks = Number(currentMedicine.qtyPacks) || 0;
+              newStock = {
+                qtyPacks: currentPacks + item.returnQty
+              };
+            } else {
+              // If sold loose, add returned quantity to total pieces
+              // Convert packs to pieces and add returned pieces
+              const currentPacks = Number(currentMedicine.qtyPacks) || 0;
+              const unitsPerPack = Number(currentMedicine.unitsPerPack) || 1;
+              const currentTotalPieces = currentPacks * unitsPerPack;
+              const newTotalPieces = currentTotalPieces + item.returnQty;
+              const newPacks = Math.floor(newTotalPieces / unitsPerPack);
+              
+              newStock = {
+                qtyPacks: newPacks
+              };
+            }
+            
+            // Update medicine inventory
+            await pharmacyMedicinesAPI.update(item.medicineId, newStock);
+            console.log(`Updated inventory for ${item.medicineName}: +${item.returnQty} ${item.sellBy || 'pieces'}`);
+          }
+        } catch (inventoryError) {
+          console.error(`Failed to update inventory for ${item.medicineName}:`, inventoryError);
+          // Don't fail the entire return process if inventory update fails
+          showToast(`Warning: Inventory not updated for ${item.medicineName}`);
+        }
+      }
+
       // Build slip data
       setSlipData({
         returnNumber: res?.data?.returnNumber || "RTN-" + Date.now(),
@@ -165,6 +208,7 @@ export default function SalesReturn() {
       setShowReturnModal(false);
       setShowSlip(true);
       fetchSales();
+      showToast(`Return processed successfully! Inventory updated for ${itemsToReturn.length} item(s).`);
     } catch (err) {
       showToast(err.message || "Error processing return");
     } finally {

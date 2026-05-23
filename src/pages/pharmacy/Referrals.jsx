@@ -1,8 +1,10 @@
 ﻿import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { FiUser, FiPhone, FiPackage, FiDollarSign, FiCheck, FiX } from 'react-icons/fi'
 import { pharmacySalesAPI, pharmacyMedicinesAPI } from '../../services/api'
 
 export default function PharmacyReferrals() {
+  const navigate = useNavigate()
   const [referrals, setReferrals] = useState([])
   const [medicines, setMedicines] = useState([])
   const [selectedReferral, setSelectedReferral] = useState(null)
@@ -11,8 +13,6 @@ export default function PharmacyReferrals() {
   const [amountPaid, setAmountPaid] = useState(0)
   const [loading, setLoading] = useState(false)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [showRejectConfirm, setShowRejectConfirm] = useState(false)
-  const [rejectingId, setRejectingId] = useState(null)
 
   useEffect(() => {
     loadReferrals()
@@ -22,10 +22,43 @@ export default function PharmacyReferrals() {
   const loadReferrals = () => {
     try {
       const stored = JSON.parse(localStorage.getItem('pharmacy_referrals') || '[]')
-      setReferrals(stored.filter(r => r.status === 'Pending'))
+      setReferrals(Array.isArray(stored) ? stored : [])
     } catch (e) {
       console.error('Error loading referrals:', e)
     }
+  }
+
+  const updateReferralStatus = (referralId, status) => {
+    try {
+      const allReferrals = JSON.parse(localStorage.getItem('pharmacy_referrals') || '[]')
+      const updated = (Array.isArray(allReferrals) ? allReferrals : []).map(r =>
+        r.id === referralId ? { ...r, status, ...(status === 'Cancelled' ? { cancelledAt: new Date().toISOString() } : {}) } : r
+      )
+      localStorage.setItem('pharmacy_referrals', JSON.stringify(updated))
+      setReferrals(updated)
+    } catch (e) {
+      console.error('Error updating referral status:', e)
+    }
+  }
+
+  const startGenerateInPOS = (referral) => {
+    try {
+      const payload = {
+        timestamp: Date.now(),
+        customerName: referral?.ownerName || '',
+        customerContact: referral?.contact || '',
+        petName: referral?.petName || '',
+        patientId: referral?.patientId || '',
+        clientId: referral?.clientId || '',
+        address: '',
+        referralId: referral?.id || '',
+        referralItems: Array.isArray(referral?.medicines) ? referral.medicines : [],
+      }
+      localStorage.setItem('pharmacy_pos_data', JSON.stringify(payload))
+    } catch (e) {
+      console.error('Error preparing POS payload from referral:', e)
+    }
+    navigate('/pharmacy/pos')
   }
 
   const loadMedicines = async () => {
@@ -41,6 +74,18 @@ export default function PharmacyReferrals() {
     setSelectedReferral(referral)
     // Map medicines to bill items with prices from pharmacy inventory
     const items = referral.medicines.map(med => {
+      // Vaccine items are not part of pharmacy inventory; keep them as non-billable by default.
+      if (med?.isVaccine) {
+        return {
+          ...med,
+          price: 0,
+          stock: 0,
+          medicineId: null,
+          quantity: 1,
+          nonInventory: true,
+        }
+      }
+
       // Try to find exact match first
       let pharmacyMed = medicines.find(m => 
         m.name?.toLowerCase().trim() === med.name?.toLowerCase().trim()
@@ -337,7 +382,7 @@ export default function PharmacyReferrals() {
         customerContact: selectedReferral.contact || '',
         petName: selectedReferral.petName,
         items: billItems.map(item => ({
-          medicineId: item.medicineId,
+          medicineId: item?.nonInventory ? undefined : item.medicineId,
           name: item.name,
           quantity: Number(item.quantity) || 1,
           price: Number(item.price) || 0,
@@ -369,13 +414,6 @@ export default function PharmacyReferrals() {
         localStorage.setItem('pharmacy_sales', JSON.stringify([saleData, ...sales]))
       }
 
-      // Update referral status
-      const allReferrals = JSON.parse(localStorage.getItem('pharmacy_referrals') || '[]')
-      const updated = allReferrals.map(r => 
-        r.id === selectedReferral.id ? { ...r, status: 'Completed', completedAt: new Date().toISOString() } : r
-      )
-      localStorage.setItem('pharmacy_referrals', JSON.stringify(updated))
-
       // Trigger financial update event
       try {
         localStorage.setItem('financial_updated_at', Date.now().toString())
@@ -403,25 +441,6 @@ export default function PharmacyReferrals() {
       setLoading(false)
       alert(`Failed to generate bill: ${e.message || 'Unknown error'}`)
     }
-  }
-
-  const handleReject = (referralId) => {
-    setRejectingId(referralId)
-    setShowRejectConfirm(true)
-  }
-
-  const confirmReject = () => {
-    if (!rejectingId) return
-    
-    const allReferrals = JSON.parse(localStorage.getItem('pharmacy_referrals') || '[]')
-    const updated = allReferrals.map(r => 
-      r.id === rejectingId ? { ...r, status: 'Rejected', rejectedAt: new Date().toISOString() } : r
-    )
-    localStorage.setItem('pharmacy_referrals', JSON.stringify(updated))
-    
-    setShowRejectConfirm(false)
-    setRejectingId(null)
-    loadReferrals()
   }
 
   return (
@@ -468,6 +487,14 @@ export default function PharmacyReferrals() {
                         <div className="font-bold text-slate-800 text-lg">{referral.petName}</div>
                         <div className="text-sm text-slate-600">Owner: {referral.ownerName}</div>
                       </div>
+                      <div className="ml-auto">
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                          (referral.status || 'Pending') === 'Pending' ? 'bg-amber-100 text-amber-700' :
+                          (referral.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-700')
+                        }`}>
+                          {referral.status || 'Pending'}
+                        </span>
+                      </div>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4 mb-4">
@@ -497,20 +524,24 @@ export default function PharmacyReferrals() {
                   </div>
 
                   <div className="flex flex-col gap-2 ml-4">
-                    <button
-                      onClick={() => handleViewReferral(referral)}
-                      className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 text-white font-semibold hover:from-emerald-700 hover:to-green-700 transition-all duration-200 flex items-center gap-2"
-                    >
-                      <FiCheck className="w-4 h-4" />
-                      Generate Bill
-                    </button>
-                    <button
-                      onClick={() => handleReject(referral.id)}
-                      className="px-4 py-2 rounded-lg bg-gradient-to-r from-red-600 to-rose-600 text-white font-semibold hover:from-red-700 hover:to-rose-700 transition-all duration-200 flex items-center gap-2"
-                    >
-                      <FiX className="w-4 h-4" />
-                      Reject
-                    </button>
+                    {(referral.status || 'Pending') === 'Pending' ? (
+                      <>
+                        <button
+                          onClick={() => startGenerateInPOS(referral)}
+                          className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 text-white font-semibold hover:from-emerald-700 hover:to-green-700 transition-all duration-200 flex items-center gap-2"
+                        >
+                          <FiCheck className="w-4 h-4" />
+                          Generate Bill
+                        </button>
+                        <button
+                          onClick={() => updateReferralStatus(referral.id, 'Cancelled')}
+                          className="px-4 py-2 rounded-lg bg-gradient-to-r from-slate-500 to-slate-600 text-white font-semibold hover:from-slate-600 hover:to-slate-700 transition-all duration-200 flex items-center gap-2"
+                        >
+                          <FiX className="w-4 h-4" />
+                          Cancel
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -677,42 +708,6 @@ export default function PharmacyReferrals() {
               </p>
               <div className="text-sm text-slate-500">
                 This window will close automatically...
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Reject Confirmation Modal */}
-      {showRejectConfirm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full transform animate-slideUp">
-            <div className="bg-gradient-to-r from-red-500 to-rose-600 text-white p-6 rounded-t-3xl text-center">
-              <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mx-auto mb-3">
-                <FiX className="w-8 h-8 text-white" />
-              </div>
-              <h2 className="text-2xl font-bold">Reject Referral?</h2>
-            </div>
-            <div className="p-6">
-              <p className="text-slate-600 text-center mb-6">
-                Are you sure you want to reject this referral? This action cannot be undone.
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowRejectConfirm(false)
-                    setRejectingId(null)
-                  }}
-                  className="flex-1 px-6 py-3 rounded-xl bg-slate-200 text-slate-700 font-bold hover:bg-slate-300 transition-all duration-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirmReject}
-                  className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 text-white font-bold hover:from-red-700 hover:to-rose-700 transition-all duration-200"
-                >
-                  Reject
-                </button>
               </div>
             </div>
           </div>

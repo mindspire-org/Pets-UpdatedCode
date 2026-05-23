@@ -888,15 +888,15 @@ export const getIncomeStatement = async ({ from, to, portal }) => {
   ];
 
   const aggregates = await JournalEntry.aggregate(pipeline);
-  const accounts = await Account.find({ code: { $in: aggregates.map(a => a._id) } }).lean();
-  const map = Object.fromEntries(accounts.map(a => [a.code, a]));
+  const allAccounts = await Account.find().lean();
+  const accountMap = Object.fromEntries(allAccounts.map(a => [a.code, a]));
 
   let totalRevenue = 0;
   let totalCOGS = 0;
   let totalExpenses = 0;
 
   const details = aggregates.map(a => {
-    const acc = map[a._id];
+    const acc = accountMap[a._id];
     const type = acc?.type;
     const balance = (a.debit || 0) - (a.credit || 0);
     if (type === 'income') {
@@ -912,10 +912,28 @@ export const getIncomeStatement = async ({ from, to, portal }) => {
   const grossProfit = totalRevenue - totalCOGS;
   const netProfit = grossProfit - totalExpenses;
 
+  const incomeHeads = {
+    consultation: { total: 0, entries: [] },
+    procedures: { total: 0, entries: [] },
+    pharmacy: { total: 0, entries: [] },
+    lab: { total: 0, entries: [] },
+    other: { total: 0, entries: [] },
+  };
+
   const expenseHeads = {
     staffSalaries: { total: 0, entries: [] },
     buildingRelated: { total: 0, entries: [] },
     otherOperational: { total: 0, entries: [] },
+  };
+
+  const classifyIncomeHead = (sourceType, description) => {
+    const st = (sourceType || '').toLowerCase();
+    const desc = (description || '').toLowerCase();
+    if (st.includes('reception_procedure') || desc.includes('procedure')) return 'procedures';
+    if (desc.includes('consultation')) return 'consultation';
+    if (st.includes('pharmacy')) return 'pharmacy';
+    if (st.includes('lab')) return 'lab';
+    return 'other';
   };
 
   const classifyExpenseHead = (category) => {
@@ -925,38 +943,66 @@ export const getIncomeStatement = async ({ from, to, portal }) => {
     return 'otherOperational';
   };
 
-  const expenseEntries = await JournalEntry.find({
-    ...match,
-    sourceType: { $in: ['financial_expense', 'voucher'] },
-  }).sort({ date: 1, _id: 1 }).lean();
-  const allAccounts = await Account.find().lean();
-  const accountMap = Object.fromEntries(allAccounts.map(a => [a.code, a]));
+  // Get all entries to build breakdown
+  const allEntries = await JournalEntry.find(match).sort({ date: 1, _id: 1 }).lean();
 
-  for (const e of expenseEntries) {
+  for (const e of allEntries) {
     const isVoucherExpense = e.sourceType === 'voucher' && /^Expense\s*-\s*/i.test(e.description || '');
-    if (e.sourceType !== 'financial_expense' && !isVoucherExpense) continue;
-    const fromMeta = e.meta?.extra?.expenseCategory ? String(e.meta.extra.expenseCategory) : '';
-    const rawCategoryBase = fromMeta || (e.description || '').replace(/^Expense\s*-\s*/i, '').trim();
-    const rawCategory = rawCategoryBase.split('|')[0].trim();
-    const headKey = classifyExpenseHead(rawCategory);
-    const expenseLines = (e.lines || []).filter(l => {
+    
+    // Process Revenue
+    const revenueLines = (e.lines || []).filter(l => {
       const acc = accountMap[l.accountCode];
-      return acc?.type === 'expense' && acc?.subType !== 'cogs';
+      return acc?.type === 'income';
     });
-    const amount = expenseLines.reduce((s, l) => s + (l.debit || 0), 0);
-    if (!amount) continue;
+    const revAmount = revenueLines.reduce((s, l) => s + (l.credit - l.debit), 0);
+    if (revAmount > 0) {
+      const headKey = classifyIncomeHead(e.sourceType, e.description);
+      incomeHeads[headKey].total += revAmount;
+      incomeHeads[headKey].entries.push({
+        entryId: String(e._id),
+        date: e.date,
+        portal: e.portal,
+        description: e.description,
+        amount: revAmount
+      });
+    }
 
-    expenseHeads[headKey].total += amount;
-    expenseHeads[headKey].entries.push({
-      entryId: String(e._id),
-      date: e.date,
-      portal: e.portal,
-      category: rawCategory,
-      description: e.description,
-      amount,
-      paymentMethod: e.meta?.extra?.paymentMethod || null,
-    });
+    // Process Expenses
+    if (e.sourceType === 'financial_expense' || isVoucherExpense) {
+      const fromMeta = e.meta?.extra?.expenseCategory ? String(e.meta.extra.expenseCategory) : '';
+      const rawCategoryBase = fromMeta || (e.description || '').replace(/^Expense\s*-\s*/i, '').trim();
+      const rawCategory = rawCategoryBase.split('|')[0].trim();
+      const headKey = classifyExpenseHead(rawCategory);
+      
+      const expenseLines = (e.lines || []).filter(l => {
+        const acc = accountMap[l.accountCode];
+        return acc?.type === 'expense' && acc?.subType !== 'cogs';
+      });
+      const amount = expenseLines.reduce((s, l) => s + (l.debit - l.credit), 0);
+      
+      if (amount > 0) {
+        expenseHeads[headKey].total += amount;
+        expenseHeads[headKey].entries.push({
+          entryId: String(e._id),
+          date: e.date,
+          portal: e.portal,
+          category: rawCategory,
+          description: e.description,
+          amount,
+          paymentMethod: e.meta?.extra?.paymentMethod || null,
+        });
+      }
+    }
   }
+
+  const operatingRevenueBreakdown = {
+    consultation: incomeHeads.consultation.total,
+    procedures: incomeHeads.procedures.total,
+    pharmacy: incomeHeads.pharmacy.total,
+    lab: incomeHeads.lab.total,
+    other: incomeHeads.other.total,
+    total: totalRevenue
+  };
 
   const operatingExpenseBreakdown = {
     staffSalaries: expenseHeads.staffSalaries.total,
@@ -966,7 +1012,7 @@ export const getIncomeStatement = async ({ from, to, portal }) => {
     entries: expenseHeads,
   };
 
-  return { totalRevenue, totalCOGS, totalExpenses, grossProfit, netProfit, operatingExpenseBreakdown, lines: details };
+  return { totalRevenue, totalCOGS, totalExpenses, grossProfit, netProfit, operatingRevenueBreakdown, operatingExpenseBreakdown, lines: details };
 };
 
 export const getSanityChecks = async ({ from, to, portal }) => {
@@ -1217,13 +1263,6 @@ export const getPartyLedger = async ({ partyType, partyId, from, to, portal }) =
   }
   if (portal && portal !== 'all') match.portal = portal;
 
-  const metaField =
-    partyType === 'supplier' ? 'meta.supplierId' :
-    partyType === 'customer' ? 'meta.customerId' :
-    partyType === 'patient' ? 'meta.patientId' : null;
-
-  if (!metaField) return [];
-
   const pipeline = [
     { $match: match },
     { $sort: { date: 1, _id: 1 } },
@@ -1236,11 +1275,18 @@ export const getPartyLedger = async ({ partyType, partyId, from, to, portal }) =
   const relevantAccountCodes =
     partyType === 'supplier'
       ? ['2001', '2010', '2020', '2030']
-      : ['1100'];
+      : ['1100', '1001', '1002'];
 
   const matchEntryParty = (e) => {
-    const v = e.meta && e.meta[metaField.split('.').pop()];
-    return v === partyId;
+    if (!e.meta) return false;
+    const m = e.meta;
+    // Check all possible party ID fields for a match
+    const partyFields = ['patientId', 'petId', 'clientId', 'customerId', 'supplierId', 'partyId'];
+    for (const f of partyFields) {
+      if (String(m[f] || '') === String(partyId)) return true;
+      if (m.extra && String(m.extra[f] || '') === String(partyId)) return true;
+    }
+    return false;
   };
 
   return entries

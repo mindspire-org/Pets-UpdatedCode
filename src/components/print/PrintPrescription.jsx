@@ -10,6 +10,26 @@ export default function PrintPrescription({
   onAfterPrint,
 }){
   const [isPrinting, setIsPrinting] = useState(false)
+  const normalizeKey = (v) => String(v || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '')
+  const isVaccineItem = (it) => {
+    if (!it) return false
+    if (it.isVaccine === true) return true
+    // Legacy fallbacks: if it has shots array, treat as vaccine
+    if (Array.isArray(it.shots) && it.shots.length) return true
+    // Some older vaccine rows were saved as Fixed Dose
+    if (String(it.doseType || '').toLowerCase().includes('fixed')) return true
+    return false
+  }
+  const formatVaccineStage = (stage) => {
+    const s = String(stage || '').trim().toLowerCase()
+    if (!s) return ''
+    if (s === '1st') return 'Shot 1'
+    if (s === '2nd') return 'Shot 2'
+    if (s === '3rd') return 'Shot 3'
+    if (s === '4th') return 'Shot 4'
+    if (s === 'annual booster') return 'Annual booster'
+    return stage
+  }
   const extractNum = (val) => {
     const m = String(val ?? '').match(/[-+]?[0-9]*\.?[0-9]+/)
     return m ? parseFloat(m[0]) : NaN
@@ -52,15 +72,20 @@ export default function PrintPrescription({
     })()
     const esc = (v) => String(v==null?'':v)
       .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')
-    const groupMap = {}
+    const groupMapMed = {}
+    const groupMapVac = {}
     ;(p0.items||[]).forEach(it=>{
       const key = it.condition || 'General'
-      if(!groupMap[key]) groupMap[key]=[]
-      groupMap[key].push(it)
+      const target = isVaccineItem(it) ? groupMapVac : groupMapMed
+      if(!target[key]) target[key]=[]
+      target[key].push(it)
     })
-    const groupKeys = Object.keys(groupMap)
-    const itemsHTML = groupKeys.length ? groupKeys.map((k)=>{
-      const rows = groupMap[k].map(x=>{
+    const groupKeysMed = Object.keys(groupMapMed)
+    const groupKeysVac = Object.keys(groupMapVac)
+
+    const renderGroupsHTML = (groupMap, groupKeys) => {
+      return groupKeys.length ? groupKeys.map((k)=>{
+        const rows = groupMap[k].map(x=>{
         let displayDose = x.dose
         try {
           // Fixed Dose: use the dose field directly without calculation
@@ -100,13 +125,86 @@ export default function PrintPrescription({
               <div></div>
             </div>
           </div>`
-      }).join('')
-      return `
-        <div style="margin-bottom:10px;">
-          ${k!=='General' ? `<div class="font-semibold" style="color:#000;margin-bottom:4px;">Condition: ${esc(k)}</div>`:''}
-          <div style="padding-left:12px;">${rows}</div>
-        </div>`
-    }).join('') : '<div style="color:#64748b;">No medicines.</div>'
+        }).join('')
+        return `
+          <div style="margin-bottom:10px;">
+            ${k!=='General' ? `<div class="font-semibold" style="color:#000;margin-bottom:4px;">Condition: ${esc(k)}</div>`:''}
+            <div style="padding-left:12px;">${rows}</div>
+          </div>`
+      }).join('') : ''
+    }
+
+    const medicinesHTML = renderGroupsHTML(groupMapMed, groupKeysMed)
+    const renderVaccinesHTML = (groupMap, groupKeys) => {
+      return groupKeys.length ? groupKeys.map((k)=>{
+        const byName = {}
+        ;(groupMap[k]||[]).forEach(it=>{
+          const nk = normalizeKey(it?.name) || 'vaccine'
+          if(!byName[nk]) byName[nk] = []
+          byName[nk].push(it)
+        })
+        const nameKeys = Object.keys(byName)
+        const blocks = nameKeys.map((nk)=>{
+          const rows = byName[nk]
+          const head = rows[0] || {}
+          const route = esc(head.route || '')
+          const name = esc(head.name || '')
+          const instr = esc(head.instructions || '')
+
+          const collectShots = () => {
+            const shots = []
+            rows.forEach((r)=>{
+              if (Array.isArray(r?.shots) && r.shots.length) {
+                r.shots.forEach(s => shots.push(s))
+              } else if (r?.shotStage || r?.dateGiven || r?.nextDue || r?.vet) {
+                shots.push({
+                  shotStage: r.shotStage,
+                  dateGiven: r.dateGiven,
+                  nextDue: r.nextDue,
+                  vet: r.vet,
+                })
+              }
+            })
+            return shots
+          }
+
+          const shots = collectShots().map((s, idx)=>{
+            const stage = esc(formatVaccineStage(s?.shotStage || `Shot ${idx+1}`))
+            const dt = esc(s?.dateGiven || '')
+            return `
+              <div style="display:grid;grid-template-columns: 1fr 120px;column-gap:8px;">
+                <div style="font-weight:700;">${stage}</div>
+                <div style="text-align:right;">${dt}</div>
+              </div>`
+          }).join('')
+
+          return `
+            <div style="margin-bottom:10px;">
+              <div style="display:grid;grid-template-columns:25% 1fr;column-gap:8px;align-items:baseline;">
+                <div class="text-slate-700">${route}</div>
+                <div class="font-bold">${name}</div>
+              </div>
+              <div style="display:grid;grid-template-columns:25% 1fr;column-gap:8px;font-size:11px;color:#000;margin-top:2px;">
+                <div></div>
+                <div style="font-style:italic;">${instr}</div>
+              </div>
+              <div style="padding-left:25%;margin-top:4px;">${shots}</div>
+            </div>`
+        }).join('')
+
+        return `
+          <div style="margin-bottom:10px;">
+            ${k!=='General' ? `<div class="font-semibold" style="color:#000;margin-bottom:4px;">Condition: ${esc(k)}</div>`:''}
+            <div style="padding-left:12px;">${blocks}</div>
+          </div>`
+      }).join('') : ''
+    }
+
+    const vaccinesHTML = renderVaccinesHTML(groupMapVac, groupKeysVac)
+    const itemsHTML = (medicinesHTML || vaccinesHTML) ? (`
+      ${medicinesHTML || ''}
+      ${vaccinesHTML ? `<div style="margin-top:10px;"></div>${vaccinesHTML}` : ''}
+    `) : '<div style="color:#64748b;">No medicines.</div>'
 
     const content = `
       <div id="rx-print">
@@ -364,15 +462,20 @@ export default function PrintPrescription({
                 <div className="flex-1">
                   <div className="text-lg font-bold mb-2">Rx</div>
                   {(()=>{
-                    const groups = {};
-                    (p.items||[]).forEach(it=>{
+                    const groupsMed = {}
+                    const groupsVac = {}
+                    ;(p.items||[]).forEach(it=>{
                       const key = it.condition || 'General'
-                      if(!groups[key]) groups[key]=[]
-                      groups[key].push(it)
+                      const target = isVaccineItem(it) ? groupsVac : groupsMed
+                      if(!target[key]) target[key]=[]
+                      target[key].push(it)
                     })
-                    const keys = Object.keys(groups)
-                    return keys.length? keys.map((k,gi)=> (
-                      <div key={gi} className="mb-3">
+                    const keysMed = Object.keys(groupsMed)
+                    const keysVac = Object.keys(groupsVac)
+
+                    const renderGroups = (groups, keys, keyPrefix) => {
+                      return keys.length ? keys.map((k,gi)=> (
+                      <div key={`${keyPrefix}-${gi}-${k}`} className="mb-3">
                         {k!=='General' && <div className="font-semibold text-rose-700 mb-1">Condition: {k}</div>}
                         <div className="pl-3 border-l-2 border-slate-300 space-y-2">
                           {groups[k].map((x,i)=> {
@@ -403,7 +506,7 @@ export default function PrintPrescription({
                             }
                             const amt = displayDose ? `${displayDose} ${x.unit||'ml'}` : (x.unit ? `${x.unit}` : '—')
                             return (
-                              <div key={i} className="pb-1 print-medicine">
+                              <div key={`${keyPrefix}-${gi}-${k}-${x?.id || x?.name || ''}-${i}`} className="pb-1 print-medicine">
                                 <div className="grid grid-cols-12 gap-x-2 items-baseline">
                                   <div className="col-span-3 text-slate-700">{x.route||''}</div>
                                   <div className="col-span-7 font-bold text-slate-900">{x.name}</div>
@@ -419,7 +522,72 @@ export default function PrintPrescription({
                           })}
                         </div>
                       </div>
-                    )) : <div className="text-slate-500">No medicines.</div>
+                      )) : null
+                    }
+
+                    const medsBlock = renderGroups(groupsMed, keysMed, 'm')
+                    const renderVaccineGroups = (groups, keys) => {
+                      return keys.length ? keys.map((k,gi)=>{
+                        const byName = {}
+                        ;(groups[k]||[]).forEach(it=>{
+                          const nk = normalizeKey(it?.name) || 'vaccine'
+                          if(!byName[nk]) byName[nk] = []
+                          byName[nk].push(it)
+                        })
+                        const nameKeys = Object.keys(byName)
+                        return (
+                          <div key={`v-${gi}-${k}`} className="mb-3">
+                            {k!=='General' && <div className="font-semibold text-rose-700 mb-1">Condition: {k}</div>}
+                            <div className="pl-3 border-l-2 border-slate-300 space-y-2">
+                              {nameKeys.map((nk,ni)=>{
+                                const rows = byName[nk]
+                                const head = rows[0] || {}
+                                // Collect all shots from nested shots array or legacy fields
+                                const allShots = []
+                                rows.forEach((r)=>{
+                                  if (Array.isArray(r?.shots) && r.shots.length) {
+                                    r.shots.forEach(s => allShots.push(s))
+                                  } else if (r?.shotStage || r?.dateGiven || r?.nextDue || r?.vet) {
+                                    allShots.push({
+                                      shotStage: r.shotStage,
+                                      dateGiven: r.dateGiven,
+                                      nextDue: r.nextDue,
+                                      vet: r.vet,
+                                    })
+                                  }
+                                })
+                                return (
+                                  <div key={`v-${gi}-${k}-${ni}-${nk}`} className="pb-1">
+                                    <div className="grid grid-cols-12 gap-x-2 items-baseline">
+                                      <div className="col-span-3 text-slate-700">{head.route||''}</div>
+                                      <div className="col-span-9 font-bold text-slate-900">{head.name}</div>
+                                    </div>
+                                    <div className="grid grid-cols-12 gap-x-2 text-xs text-slate-600">
+                                      <div className="col-span-3"></div>
+                                      <div className="col-span-9 italic">{head.instructions||''}</div>
+                                    </div>
+                                    <div className="pl-[25%] mt-1 space-y-1 text-xs">
+                                      {allShots.map((s,si)=> (
+                                        <div key={`vshot-${gi}-${k}-${ni}-${si}`} className="flex items-baseline justify-between pr-4">
+                                          <div className="font-semibold text-slate-800">{formatVaccineStage(s?.shotStage || `Shot ${si+1}`)}</div>
+                                          <div className="text-slate-700">{s?.dateGiven || ''}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      }) : null
+                    }
+
+                    const vacsBlock = renderVaccineGroups(groupsVac, keysVac)
+                    return (medsBlock || vacsBlock) ? (<>
+                      {medsBlock}
+                      {vacsBlock}
+                    </>) : <div className="text-slate-500">No medicines.</div>
                   })()}
                 </div>
               </div>

@@ -9,6 +9,18 @@ export default function PharmacyLogin() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { addActivity } = useActivity()
+
+  const normalizeSidebarPermissions = (sp) => {
+    if (!sp) return {}
+    // If backend ever sends a Map-like structure
+    if (typeof sp?.entries === 'function') {
+      try {
+        return Object.fromEntries(sp.entries())
+      } catch {}
+    }
+    if (typeof sp === 'object' && !Array.isArray(sp)) return sp
+    return {}
+  }
   
   const handleSubmit = async ({ username, password }) => {
     try {
@@ -19,19 +31,29 @@ export default function PharmacyLogin() {
       
       if (response && response.data) {
         const user = response.data
+        const userRole = user.role?.toLowerCase()
         
-        if (user.role === 'pharmacy' || user.role === 'Pharmacy') {
+        if (userRole === 'pharmacy' || userRole === 'admin') {
+          // Check if user has pharmacy portal access
+          const hasPortalAccess = user.portalAccess?.map(p => p.toLowerCase()).includes('pharmacy')
+          
+          if (userRole !== 'admin' && !hasPortalAccess) {
+            setError('Access denied. You do not have permission to access the Pharmacy Portal. Contact your administrator.')
+            return
+          }
+          
           localStorage.setItem('portal', 'pharmacy')
           localStorage.setItem('pharmacy_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role,
-            sidebarPermissions: user.sidebarPermissions || {}
+            role: user.role, // Keep original casing for display
+            sidebarPermissions: normalizeSidebarPermissions(user.sidebarPermissions),
+            portalAccess: user.portalAccess || []
           }))
           try { addActivity({ user: 'Pharmacy', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/pharmacy')
         } else {
-          setError('Access denied. Pharmacy role required.')
+          setError('Access denied. Pharmacy or Admin role required.')
         }
       } else {
         setError('Invalid username or password')

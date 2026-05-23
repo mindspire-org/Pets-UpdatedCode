@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema({
     type: Map,
     of: [String],
     default: {}
+  },
+  portalAccess: {
+    type: [String],
+    default: [],
+    enum: ['admin', 'reception', 'doctor', 'lab', 'pharmacy', 'shop']
   }
 }, {
   timestamps: true

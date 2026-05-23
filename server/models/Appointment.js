@@ -10,6 +10,10 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  procedureSessionId: {
+    type: String,
+    trim: true,
+  },
   clientId: {
     type: String
   },

@@ -1,5 +1,5 @@
 import React from 'react'
-import { FiMenu, FiArrowLeft } from 'react-icons/fi'
+import { FiMenu } from 'react-icons/fi'
 import { Link } from 'react-router-dom'
 import { useSettings } from '../context/SettingsContext'
 
@@ -14,13 +14,6 @@ export default function LabTopbar({ onToggle }){
       <div className="px-3 md:px-5 py-2">
         <div className="h-12 w-full rounded-full border border-emerald-100 bg-emerald-50/60 shadow-sm flex items-center justify-between px-2">
           <div className="flex items-center gap-2">
-            <Link
-              to="/"
-              className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-600 hover:text-slate-800 border border-slate-200 cursor-pointer"
-              aria-label="Back to modules"
-            >
-              <FiArrowLeft className="h-5 w-5" />
-            </Link>
             <button onClick={onToggle} className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-white text-slate-600 hover:text-slate-800 border border-slate-200 cursor-pointer" aria-label="Toggle sidebar">
               <FiMenu className="h-5 w-5" />
             </button>

@@ -9,6 +9,17 @@ export default function LabLogin() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { addActivity } = useActivity()
+
+  const normalizeSidebarPermissions = (sp) => {
+    if (!sp) return {}
+    if (typeof sp?.entries === 'function') {
+      try {
+        return Object.fromEntries(sp.entries())
+      } catch {}
+    }
+    if (typeof sp === 'object' && !Array.isArray(sp)) return sp
+    return {}
+  }
   
   const handleSubmit = async ({ username, password }) => {
     try {
@@ -19,19 +30,28 @@ export default function LabLogin() {
       
       if (response && response.data) {
         const user = response.data
+        const userRole = user.role?.toLowerCase()
         
-        if (user.role === 'lab' || user.role === 'Lab') {
+        if (userRole === 'lab' || userRole === 'admin') {
+          // Check if user has lab portal access
+          const hasPortalAccess = user.portalAccess?.map(p => p.toLowerCase()).includes('lab')
+          if (userRole !== 'admin' && !hasPortalAccess) {
+            setError('Access denied. You do not have permission to access the Lab Portal. Contact your administrator.')
+            return
+          }
+          
           localStorage.setItem('portal', 'lab')
           localStorage.setItem('lab_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role,
-            sidebarPermissions: user.sidebarPermissions || {}
+            role: user.role, // Keep original casing for display
+            sidebarPermissions: normalizeSidebarPermissions(user.sidebarPermissions),
+            portalAccess: user.portalAccess || []
           }))
           try { addActivity({ user: 'Lab', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/lab')
         } else {
-          setError('Access denied. Lab role required.')
+          setError('Access denied. Lab or Admin role required.')
         }
       } else {
         setError('Invalid username or password')

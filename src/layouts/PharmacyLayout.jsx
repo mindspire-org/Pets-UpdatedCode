@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import {
   FiHome,
@@ -20,12 +20,14 @@ import {
 import { MdLocalPharmacy } from "react-icons/md";
 import { useSettings } from "../context/SettingsContext";
 import DaySessionBanner from "../components/DaySessionBanner";
+import "../utils/permissionDebugger.js"; // Load permission debugger for development
 
 export default function PharmacyLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  
   const context = (function() {
     try {
       return useSettings();
@@ -53,6 +55,39 @@ export default function PharmacyLayout() {
         <main className="flex-1 flex items-center justify-center">
           <p className="text-slate-500 font-medium">Initializing Pharmacy Portal...</p>
         </main>
+      </div>
+    );
+  }
+
+  // Check if user has portal access
+  const pharmacyUser = JSON.parse(localStorage.getItem("pharmacy_auth") || "{}");
+  
+  if (!pharmacyUser.username) {
+    navigate('/pharmacy/login');
+    return null;
+  }
+
+  // Debug user permissions - removed verbose logging to reduce console noise
+
+  // Check portal access
+  const isAdmin = pharmacyUser.role?.toLowerCase() === 'admin';
+  if (!isAdmin && (!pharmacyUser.portalAccess || !pharmacyUser.portalAccess.map(p => p.toLowerCase()).includes('pharmacy'))) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-50">
+        <div className="text-center p-8 bg-white rounded-2xl shadow-lg border border-red-100">
+          <div className="h-16 w-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <MdLocalPharmacy className="h-8 w-8 text-red-600" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">Access Denied</h2>
+          <p className="text-slate-600">You don't have access to the Pharmacy Portal.</p>
+          <p className="text-sm text-slate-500 mt-2">Contact your administrator to request access.</p>
+          <button
+            onClick={() => navigate('/')}
+            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            Return to Home
+          </button>
+        </div>
       </div>
     );
   }
@@ -139,19 +174,51 @@ export default function PharmacyLayout() {
     }
   };
 
-  const pharmacyUser = JSON.parse(
-    localStorage.getItem("pharmacy_auth") || "{}",
-  );
+  // Filter menu groups based on permissions
+  let filteredMenuGroups;
+  
+  // Normalize role for comparison
+  const normalizedRole = pharmacyUser.role?.toLowerCase();
+  const isUserAdmin = normalizedRole === 'admin';
 
-  const sidebarPermissions = pharmacyUser.sidebarPermissions || {};
-
-  const filterItems = (items) => {
-    if (pharmacyUser.role === 'admin' || pharmacyUser.role === 'Admin') return items;
-    if (!sidebarPermissions.pharmacy) return items;
+  if (isUserAdmin) {
+    // Admin sees all pages
+    filteredMenuGroups = menuGroups;
+  } else {
+    // Non-admin users - filter based on permissions
+    const allPermissions = pharmacyUser.sidebarPermissions || {};
     
-    const allowedPages = sidebarPermissions.pharmacy;
-    return items.filter(item => allowedPages.includes(item.id));
-  };
+    // In many cases with MongoDB Maps, the data might be nested or keys might vary
+    // We try to find the pharmacy permissions in any possible key
+    let pharmacyPermissions = null;
+    
+    // Try standard keys
+    if (allPermissions.pharmacy) pharmacyPermissions = allPermissions.pharmacy;
+    else if (allPermissions.Pharmacy) pharmacyPermissions = allPermissions.Pharmacy;
+    
+    // If not found and it looks like a Map that was stringified
+    if (!pharmacyPermissions) {
+      // Sometimes Maps are stringified as entries or with internal properties
+      const keys = Object.keys(allPermissions);
+      const pharmacyKey = keys.find(k => k.toLowerCase() === 'pharmacy');
+      if (pharmacyKey) {
+        pharmacyPermissions = allPermissions[pharmacyKey];
+      }
+    }
+
+    // Convert to array if it's not already one (defensive)
+    const permissionsArray = Array.isArray(pharmacyPermissions) ? pharmacyPermissions : [];
+    
+    filteredMenuGroups = menuGroups
+      .map(group => ({
+        ...group,
+        items: group.items.filter(item => {
+          const hasAccess = permissionsArray.includes(item.id);
+          return hasAccess;
+        })
+      }))
+      .filter(group => group.items.length > 0);
+  }
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -220,11 +287,16 @@ export default function PharmacyLayout() {
         >
           {/* Navigation */}
           <nav className="flex-1 py-4 overflow-y-auto custom-sidebar-scrollbar">
-            {menuGroups.map((group, groupIdx) => {
-              const filteredItems = filterItems(group.items);
-              if (filteredItems.length === 0) return null;
-
-              return (
+            {filteredMenuGroups.length === 0 ? (
+              <div className="p-6 text-center">
+                <div className="h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <FiSettings className="h-6 w-6 text-slate-400" />
+                </div>
+                <p className="text-sm text-slate-500 font-medium">No pages available</p>
+                <p className="text-xs text-slate-400 mt-1">Contact administrator for access</p>
+              </div>
+            ) : (
+              filteredMenuGroups.map((group, groupIdx) => (
                 <div key={group.title} className={`${groupIdx !== 0 ? 'mt-6' : ''}`}>
                   {sidebarOpen && (
                     <div className="px-6 mb-2">
@@ -234,7 +306,7 @@ export default function PharmacyLayout() {
                     </div>
                   )}
                   <div className="px-3 space-y-1">
-                    {filteredItems.map((item) => {
+                    {group.items.map((item) => {
                       const Icon = item.icon;
                       const active = isActive(item.path, item.exact);
 
@@ -263,8 +335,8 @@ export default function PharmacyLayout() {
                     })}
                   </div>
                 </div>
-              );
-            })}
+              ))
+            )}
             
             {/* Integrated Logout Button */}
             <div className="px-3 mt-8 pb-4">
@@ -285,10 +357,7 @@ export default function PharmacyLayout() {
           <div className="p-4 md:p-6 w-full min-w-0">
             <DaySessionBanner
               portal="pharmacy"
-              userName={
-                JSON.parse(localStorage.getItem("pharmacy_auth") || "{}")
-                  .name || "Pharmacy Staff"
-              }
+              userName={pharmacyUser.name || "Pharmacy Staff"}
             />
             <Outlet />
           </div>

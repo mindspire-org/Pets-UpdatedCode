@@ -15,19 +15,41 @@ import DoctorProfile from '../models/DoctorProfile.js'
 let RadiologyReport
 try { RadiologyReport = (await import('../models/RadiologyReport.js')).default } catch { RadiologyReport = null }
 import PharmacySale from '../models/PharmacySale.js'
-let PharmacyDue
-try { PharmacyDue = (await import('../models/PharmacyDue.js')).default } catch { PharmacyDue = null }
+import PharmacyDue from '../models/PharmacyDue.js'
 import Financial from '../models/Financial.js'
-
-// Optional shop/inventory models (best-effort)
-let Product, Sale, Supplier
-try { Product = (await import('../models/Product.js')).default } catch {}
-try { Sale = (await import('../models/Sale.js')).default } catch {}
-try { Supplier = (await import('../models/Supplier.js')).default } catch {}
-
-// Expenses (if present)
-let Expense
-try { Expense = (await import('../models/Expense.js')).default } catch {}
+import Account from '../models/Account.js'
+import ActivityLog from '../models/ActivityLog.js'
+import BudgetPlan from '../models/BudgetPlan.js'
+import Company from '../models/Company.js'
+import DailyLog from '../models/DailyLog.js'
+import DaySession from '../models/DaySession.js'
+import Expense from '../models/Expense.js'
+import HoldBill from '../models/HoldBill.js'
+import HoldInvoice from '../models/HoldInvoice.js'
+import Inventory from '../models/Inventory.js'
+import InventoryCategory from '../models/InventoryCategory.js'
+import JournalEntry from '../models/JournalEntry.js'
+import MedicalForm from '../models/MedicalForm.js'
+import Medicine from '../models/Medicine.js'
+import Payable from '../models/Payable.js'
+import PharmacyCreditCustomer from '../models/PharmacyCreditCustomer.js'
+import PharmacyInvoice from '../models/PharmacyInvoice.js'
+import PharmacyPurchaseDraft from '../models/PharmacyPurchaseDraft.js'
+import PharmacyReturn from '../models/PharmacyReturn.js'
+import PharmacySettings from '../models/PharmacySettings.js'
+import ProcedureItem from '../models/ProcedureItem.js'
+import Product from '../models/Product.js'
+import PurchaseOrder from '../models/PurchaseOrder.js'
+import Receivable from '../models/Receivable.js'
+import Sale from '../models/Sale.js'
+import Sequence from '../models/Sequence.js'
+import Settings from '../models/Settings.js'
+import ShopCustomer from '../models/ShopCustomer.js'
+import StaffAdvance from '../models/StaffAdvance.js'
+import Supplier from '../models/Supplier.js'
+import Taxonomy from '../models/Taxonomy.js'
+import VendorPayment from '../models/VendorPayment.js'
+import Voucher from '../models/Voucher.js'
 
 // Utilities
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
@@ -206,6 +228,37 @@ router.delete('/clear-doctor', asyncHandler(async (req, res) => {
       doctorProfiles: profDel?.deletedCount ?? 0,
       prescriptions: rxDel?.deletedCount ?? 0,
     }
+  })
+}))
+
+// DELETE /api/backup/clear-all
+// Danger: wipes ALL collections except User and SidebarConfig
+router.delete('/clear-all', asyncHandler(async (req, res) => {
+  const modelsToClear = [
+    Pet, Appointment, Prescription, LabReport, LabRequest, LabTest, 
+    RadiologyReport, ProcedureRecord, PharmacyMedicine, PharmacyPurchase, 
+    PharmacySale, PharmacyDue, Financial, Account, ActivityLog, 
+    BudgetPlan, Company, DailyLog, DaySession, Expense, 
+    HoldBill, HoldInvoice, Inventory, InventoryCategory, JournalEntry, 
+    MedicalForm, Medicine, Payable, PharmacyCreditCustomer, PharmacyInvoice, 
+    PharmacyPurchaseDraft, PharmacyReturn, PharmacySettings, ProcedureItem, 
+    Product, PurchaseOrder, Receivable, Sale, Sequence, 
+    Settings, ShopCustomer, StaffAdvance, Supplier, Taxonomy, 
+    VendorPayment, Voucher, DoctorProfile
+  ]
+
+  const results = {}
+  for (const Model of modelsToClear) {
+    if (Model) {
+      const outcome = await Model.deleteMany({})
+      results[Model.modelName] = outcome?.deletedCount ?? 0
+    }
+  }
+
+  res.json({
+    success: true,
+    message: "All data cleared except users and sidebar permissions",
+    deleted: results
   })
 }))
 

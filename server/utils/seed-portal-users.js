@@ -7,12 +7,48 @@ dotenv.config();
 // One user per portal, all with password: 123
 // Username = portal name (admin portal uses 'admin')
 const users = [
-  { username: 'admin',     password: '123', role: 'admin',     name: 'Admin User' },
-  { username: 'reception', password: '123', role: 'reception', name: 'Reception Staff' },
-  { username: 'doctor',    password: '123', role: 'doctor',    name: 'Doctor' },
-  { username: 'lab',       password: '123', role: 'lab',       name: 'Lab Technician' },
-  { username: 'pharmacy',  password: '123', role: 'pharmacy',  name: 'Pharmacy Staff' },
-  { username: 'shop',      password: '123', role: 'shop',      name: 'Shop Manager' },
+  { 
+    username: 'admin',     
+    password: '123', 
+    role: 'admin',     
+    name: 'Admin User',
+    portalAccess: ['admin', 'reception', 'doctor', 'lab', 'pharmacy', 'shop']
+  },
+  { 
+    username: 'reception', 
+    password: '123', 
+    role: 'reception', 
+    name: 'Reception Staff',
+    portalAccess: ['reception']
+  },
+  { 
+    username: 'doctor',    
+    password: '123', 
+    role: 'doctor',    
+    name: 'Doctor',
+    portalAccess: ['doctor']
+  },
+  { 
+    username: 'lab',       
+    password: '123', 
+    role: 'lab',       
+    name: 'Lab Technician',
+    portalAccess: ['lab']
+  },
+  { 
+    username: 'pharmacy',  
+    password: '123', 
+    role: 'pharmacy',  
+    name: 'Pharmacy Staff',
+    portalAccess: ['pharmacy']
+  },
+  { 
+    username: 'shop',      
+    password: '123', 
+    role: 'shop',      
+    name: 'Shop Manager',
+    portalAccess: ['shop']
+  },
 ];
 
 const run = async () => {
@@ -27,12 +63,13 @@ const run = async () => {
         existing.password = u.password;
         existing.role = u.role;
         existing.name = u.name;
+        existing.portalAccess = u.portalAccess;
         existing.isActive = true;
         await existing.save();
-        console.log(`🔄 Updated : ${u.username.padEnd(12)} role=${u.role}`);
+        console.log(`🔄 Updated : ${u.username.padEnd(12)} role=${u.role} portalAccess=[${u.portalAccess.join(', ')}]`);
       } else {
         await new User({ ...u, isActive: true }).save();
-        console.log(`✅ Created : ${u.username.padEnd(12)} role=${u.role}`);
+        console.log(`✅ Created : ${u.username.padEnd(12)} role=${u.role} portalAccess=[${u.portalAccess.join(', ')}]`);
       }
     }
 

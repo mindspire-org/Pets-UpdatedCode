@@ -11,6 +11,7 @@ import {
   FiX,
   FiDownload,
   FiUpload,
+  FiPlay,
 } from "react-icons/fi";
 import {
   pharmacyMedicinesAPI,
@@ -162,6 +163,32 @@ const getContainerOptions = (mainCategory, subCategory) => {
   return CONTAINER_OPTIONS_BY_KEY[key] || [];
 };
 
+const getCustomUnitsForKey = (key, storageNamespace = "pharmacy") => {
+  if (!key) return [];
+  try {
+    const map = JSON.parse(
+      localStorage.getItem(`${storageNamespace}_custom_units`) || "{}",
+    );
+    const arr = Array.isArray(map[key]) ? map[key] : [];
+    return arr.filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+const getCustomContainersForKey = (key, storageNamespace = "pharmacy") => {
+  if (!key) return [];
+  try {
+    const map = JSON.parse(
+      localStorage.getItem(`${storageNamespace}_custom_containers`) || "{}",
+    );
+    const arr = Array.isArray(map[key]) ? map[key] : [];
+    return arr.filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
 const formatUnitForDisplay = (unit, fallback = "ml") => {
   const rawUnit = String(unit || "").trim() || fallback;
   return rawUnit.toLowerCase() === "ml" ? "ML" : rawUnit;
@@ -300,8 +327,24 @@ const createEmptyItem = () => {
   };
 };
 
-export default function Medicines() {
+export default function Medicines({
+  basePath = "/pharmacy",
+  portalName = "pharmacy",
+  storageNamespace = "pharmacy",
+  title = "Medicine Inventory",
+  subtitle = "Manage pharmacy medicines and stock",
+  addInvoicePath = null,
+  initialTab = "all",
+  apis,
+} = {}) {
   const navigate = useNavigate();
+  const medicinesAPI = apis?.medicines || pharmacyMedicinesAPI;
+  const salesAPI = apis?.sales || pharmacySalesAPI;
+  const purchaseDraftsAPI = apis?.purchaseDrafts || pharmacyPurchaseDraftsAPI;
+  const suppliersPortal = apis?.suppliersPortal || portalName;
+  const companiesPortal = apis?.companiesPortal || portalName;
+  const resolvedSuppliersAPI = apis?.suppliers || suppliersAPI;
+  const resolvedCompaniesAPI = apis?.companies || companiesAPI;
   const [medicines, setMedicines] = useState([]);
   const [filteredMedicines, setFilteredMedicines] = useState([]);
   const [purchaseDrafts, setPurchaseDrafts] = useState([]);
@@ -352,7 +395,7 @@ export default function Medicines() {
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
-  const [activeTab, setActiveTab] = useState("all");
+  const [activeTab, setActiveTab] = useState(initialTab || "all");
   const importInputRef = useRef();
 
   const categories = useMemo(() => ["All", ...catalogMainCategories], []);
@@ -389,7 +432,7 @@ export default function Medicines() {
   const getHiddenMainCategories = () => {
     try {
       const arr = JSON.parse(
-        localStorage.getItem("pharmacy_hidden_main_categories") || "[]",
+        localStorage.getItem(`${storageNamespace}_hidden_main_categories`) || "[]",
       );
       return Array.isArray(arr) ? arr.filter(Boolean) : [];
     } catch {
@@ -401,7 +444,7 @@ export default function Medicines() {
     if (!mainCategory || !subCategory) return [];
     try {
       const map = JSON.parse(
-        localStorage.getItem("pharmacy_custom_medicines") || "{}",
+        localStorage.getItem(`${storageNamespace}_custom_medicines`) || "{}",
       );
       const key = getMedicineKey(mainCategory, subCategory);
       const arr = Array.isArray(map[key]) ? map[key] : [];
@@ -415,7 +458,7 @@ export default function Medicines() {
     if (!mainCategory) return [];
     try {
       const map = JSON.parse(
-        localStorage.getItem("pharmacy_hidden_subcategories") || "{}",
+        localStorage.getItem(`${storageNamespace}_hidden_subcategories`) || "{}",
       );
       const arr = Array.isArray(map[mainCategory]) ? map[mainCategory] : [];
       return arr.filter(Boolean);
@@ -427,7 +470,7 @@ export default function Medicines() {
   const getCustomMainCategories = () => {
     try {
       const arr = JSON.parse(
-        localStorage.getItem("pharmacy_custom_main_categories") || "[]",
+        localStorage.getItem(`${storageNamespace}_custom_main_categories`) || "[]",
       );
       return Array.isArray(arr) ? arr.filter(Boolean) : [];
     } catch {
@@ -439,7 +482,7 @@ export default function Medicines() {
     if (!mainCategory) return [];
     try {
       const map = JSON.parse(
-        localStorage.getItem("pharmacy_custom_subcategories") || "{}",
+        localStorage.getItem(`${storageNamespace}_custom_subcategories`) || "{}",
       );
       const arr = Array.isArray(map[mainCategory]) ? map[mainCategory] : [];
       return arr.filter(Boolean);
@@ -455,7 +498,7 @@ export default function Medicines() {
     if (!mainCategory || !subCategory) return [];
     try {
       const map = JSON.parse(
-        localStorage.getItem("pharmacy_hidden_medicines") || "{}",
+        localStorage.getItem(`${storageNamespace}_hidden_medicines`) || "{}",
       );
       const key = getMedicineKey(mainCategory, subCategory);
       const arr = Array.isArray(map[key]) ? map[key] : [];
@@ -470,13 +513,13 @@ export default function Medicines() {
     if (!val) return;
     try {
       const raw =
-        localStorage.getItem("pharmacy_hidden_main_categories") || "[]";
+        localStorage.getItem(`${storageNamespace}_hidden_main_categories`) || "[]";
       const parsed = JSON.parse(raw);
       const list = Array.isArray(parsed) ? parsed : [];
       if (!list.includes(val)) {
         const next = [...list, val];
         localStorage.setItem(
-          "pharmacy_hidden_main_categories",
+          `${storageNamespace}_hidden_main_categories`,
           JSON.stringify(next),
         );
       }
@@ -543,12 +586,12 @@ export default function Medicines() {
 
     try {
       const raw =
-        localStorage.getItem("pharmacy_custom_main_categories") || "[]";
+        localStorage.getItem(`${storageNamespace}_custom_main_categories`) || "[]";
       const parsed = JSON.parse(raw);
       const list = Array.isArray(parsed) ? parsed : [];
       const nextList = list.map((x) => (x === oldName ? newName : x));
       localStorage.setItem(
-        "pharmacy_custom_main_categories",
+        `${storageNamespace}_custom_main_categories`,
         JSON.stringify(Array.from(new Set(nextList)).filter(Boolean)),
       );
     } catch {}
@@ -561,431 +604,51 @@ export default function Medicines() {
         if (!Object.prototype.hasOwnProperty.call(map, oldName)) return;
         const existing = Array.isArray(map[newName]) ? map[newName] : [];
         const moved = Array.isArray(map[oldName]) ? map[oldName] : [];
-        map[newName] = Array.from(new Set([...existing, ...moved])).filter(
-          Boolean,
-        );
+        map[newName] = Array.from(new Set([...existing, ...moved])).filter(Boolean);
         delete map[oldName];
         localStorage.setItem(storageKey, JSON.stringify(map));
       } catch {}
     };
-    remapObjectKey("pharmacy_custom_subcategories");
-    remapObjectKey("pharmacy_hidden_subcategories");
 
-    const replaceMainPrefix = (storageKey) => {
-      try {
-        const raw = localStorage.getItem(storageKey) || "{}";
-        const map = JSON.parse(raw);
-        const next = {};
-        Object.entries(map || {}).forEach(([k, v]) => {
-          const keyStr = String(k || "");
-          const outKey = keyStr.startsWith(oldName + "::")
-            ? newName + keyStr.slice(oldName.length)
-            : keyStr;
-          next[outKey] = v;
-        });
-        localStorage.setItem(storageKey, JSON.stringify(next));
-      } catch {}
-    };
-    replaceMainPrefix("pharmacy_custom_medicines");
-    replaceMainPrefix("pharmacy_hidden_medicines");
-
-    try {
-      const raw =
-        localStorage.getItem("pharmacy_hidden_main_categories") || "[]";
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed) ? parsed : [];
-      const next = list.map((x) => (x === oldName ? newName : x));
-      localStorage.setItem(
-        "pharmacy_hidden_main_categories",
-        JSON.stringify(Array.from(new Set(next)).filter(Boolean)),
-      );
-    } catch {}
-
-    setOptionsVersion((v) => v + 1);
-    setSelectedMainCategory((prev) => (prev === oldName ? newName : prev));
-    setFormData((prev) => {
-      const nextForm = { ...prev };
-      if (nextForm.mainCategory === oldName) nextForm.mainCategory = newName;
-      if (nextForm.category === oldName) nextForm.category = newName;
-      return nextForm;
-    });
-    showToast("Category updated");
-  };
-
-  const renameCustomSubCategory = (mainCategory, oldValue, nextValue) => {
-    const main = String(mainCategory || "").trim();
-    const oldName = String(oldValue || "").trim();
-    const newName = String(nextValue || "").trim();
-    if (!main || !oldName || !newName) return;
-    if (oldName === newName) return;
-    const custom = getCustomSubCategories(main);
-    if (!custom.includes(oldName)) {
-      showToast("Only custom subcategories can be edited");
-      return;
-    }
-    const allSubs = [...new Set([...getSubCategories(main), ...custom])];
-    if (allSubs.includes(newName)) {
-      showToast("Subcategory already exists");
-      return;
-    }
-
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_subcategories") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[main]) ? map[main] : [];
-      map[main] = Array.from(
-        new Set(list.map((x) => (x === oldName ? newName : x))),
-      ).filter(Boolean);
-      localStorage.setItem(
-        "pharmacy_custom_subcategories",
-        JSON.stringify(map),
-      );
-    } catch {}
-
-    const replaceSubSuffix = (storageKey) => {
-      try {
-        const raw = localStorage.getItem(storageKey) || "{}";
-        const map = JSON.parse(raw);
-        const next = {};
-        Object.entries(map || {}).forEach(([k, v]) => {
-          const keyStr = String(k || "");
-          if (keyStr === `${main}::${oldName}`) next[`${main}::${newName}`] = v;
-          else next[keyStr] = v;
-        });
-        localStorage.setItem(storageKey, JSON.stringify(next));
-      } catch {}
-    };
-    replaceSubSuffix("pharmacy_custom_medicines");
-    replaceSubSuffix("pharmacy_hidden_medicines");
-
-    try {
-      const raw = localStorage.getItem("pharmacy_hidden_subcategories") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[main]) ? map[main] : [];
-      map[main] = Array.from(
-        new Set(list.map((x) => (x === oldName ? newName : x))),
-      ).filter(Boolean);
-      localStorage.setItem(
-        "pharmacy_hidden_subcategories",
-        JSON.stringify(map),
-      );
-    } catch {}
-
-    setOptionsVersion((v) => v + 1);
-    setFormData((prev) => {
-      const nextForm = { ...prev };
-      if (nextForm.mainCategory === main && nextForm.subCategory === oldName) {
-        nextForm.subCategory = newName;
-        nextForm.category = newName;
-      }
-      if (nextForm.category === oldName) nextForm.category = newName;
-      return nextForm;
-    });
-    showToast("Subcategory updated");
-  };
-
-  const renameCustomMedicineName = (
-    mainCategory,
-    subCategory,
-    oldValue,
-    nextValue,
-  ) => {
-    const main = String(mainCategory || "").trim();
-    const sub = String(subCategory || "").trim();
-    const oldName = String(oldValue || "").trim();
-    const newName = String(nextValue || "").trim();
-    if (!main || !sub || !oldName || !newName) return;
-    if (oldName === newName) return;
-    const custom = getCustomMedicines(main, sub);
-    if (!custom.includes(oldName)) {
-      showToast("Only custom medicines can be edited");
-      return;
-    }
-    const allMeds = [
-      ...new Set([...getCatalogMedicines(main, sub), ...custom]),
-    ];
-    if (allMeds.includes(newName)) {
-      showToast("Medicine already exists");
-      return;
-    }
-
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_medicines") || "{}";
-      const map = JSON.parse(raw);
-      const key = getMedicineKey(main, sub);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = Array.from(
-        new Set(list.map((x) => (x === oldName ? newName : x))),
-      ).filter(Boolean);
-      localStorage.setItem("pharmacy_custom_medicines", JSON.stringify(map));
-    } catch {}
-
-    try {
-      const raw = localStorage.getItem("pharmacy_hidden_medicines") || "{}";
-      const map = JSON.parse(raw);
-      const key = getMedicineKey(main, sub);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = Array.from(
-        new Set(list.map((x) => (x === oldName ? newName : x))),
-      ).filter(Boolean);
-      localStorage.setItem("pharmacy_hidden_medicines", JSON.stringify(map));
-    } catch {}
-
-    setOptionsVersion((v) => v + 1);
-    setFormData((prev) => {
-      if (
-        prev.mainCategory === main &&
-        prev.subCategory === sub &&
-        prev.medicineName === oldName
-      ) {
-        return { ...prev, medicineName: newName };
-      }
-      return prev;
-    });
-    showToast("Medicine updated");
-  };
-
-  const hideSubCategory = (mainCategory, subCategory) => {
-    const main = mainCategory || "";
-    const sub = subCategory || "";
-    if (!main || !sub) return;
-    try {
-      const raw = localStorage.getItem("pharmacy_hidden_subcategories") || "{}";
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed[main]) ? parsed[main] : [];
-      if (!list.includes(sub)) {
-        parsed[main] = [...list, sub];
-        localStorage.setItem(
-          "pharmacy_hidden_subcategories",
-          JSON.stringify(parsed),
-        );
-      }
-    } catch {}
-    setOptionsVersion((v) => v + 1);
-    setFormData((prev) => {
-      if (prev.mainCategory !== main || prev.subCategory !== sub) return prev;
-      const catalogSubs = getSubCategories(main);
-      const customSubs = getCustomSubCategories(main);
-      const allSubs = [...new Set([...catalogSubs, ...customSubs])];
-      const hiddenSubs = getHiddenSubCategories(main).concat([sub]);
-      const visibleSubs = allSubs.filter((sc) => !hiddenSubs.includes(sc));
-      const nextSub = visibleSubs[0] || "";
-      if (!nextSub) {
-        return {
-          ...prev,
-          subCategory: "",
-          category: main,
-          medicineName: "",
-          unit: getCategoryUnit(main, ""),
-          containerType: getDefaultContainerType(main, ""),
-        };
-      }
-      const hiddenMeds = getHiddenMedicines(main, nextSub);
-      const catalogMeds = getCatalogMedicines(main, nextSub);
-      const customMeds = getCustomMedicines(main, nextSub);
-      const allMeds = [...new Set([...catalogMeds, ...customMeds])];
-      const visibleMeds = allMeds.filter((m) => !hiddenMeds.includes(m));
-      const nextMed = visibleMeds[0] || "";
-      return {
-        ...prev,
-        subCategory: nextSub,
-        category: nextSub,
-        medicineName: nextMed,
-        unit: getCategoryUnit(main, nextSub),
-        containerType: getDefaultContainerType(main, nextSub),
-      };
-    });
-  };
-
-  const hideMedicineName = (mainCategory, subCategory, medicineName) => {
-    const main = mainCategory || "";
-    const sub = subCategory || "";
-    const name = medicineName || "";
-    if (!main || !sub || !name) return;
-    try {
-      const raw = localStorage.getItem("pharmacy_hidden_medicines") || "{}";
-      const parsed = JSON.parse(raw);
-      const key = getMedicineKey(main, sub);
-      const list = Array.isArray(parsed[key]) ? parsed[key] : [];
-      if (!list.includes(name)) {
-        parsed[key] = [...list, name];
-        localStorage.setItem(
-          "pharmacy_hidden_medicines",
-          JSON.stringify(parsed),
-        );
-      }
-    } catch {}
-    setOptionsVersion((v) => v + 1);
-    setFormData((prev) => {
-      if (
-        prev.mainCategory !== main ||
-        prev.subCategory !== sub ||
-        prev.medicineName !== name
-      )
-        return prev;
-      const catalogMeds = getCatalogMedicines(main, sub);
-      const customMeds = getCustomMedicines(main, sub);
-      const allMeds = [...new Set([...catalogMeds, ...customMeds])];
-      const hiddenMeds = getHiddenMedicines(main, sub).concat([name]);
-      const visibleMeds = allMeds.filter((m) => !hiddenMeds.includes(m));
-      const nextMed = visibleMeds[0] || "";
-      return {
-        ...prev,
-        medicineName: nextMed,
-      };
-    });
-  };
-
-  const addCustomMainCategory = (name) => {
-    const val = (name || "").trim();
-    if (!val) return;
-    try {
-      const raw =
-        localStorage.getItem("pharmacy_custom_main_categories") || "[]";
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed) ? parsed : [];
-      const next = [...new Set([...list, val])];
-      localStorage.setItem(
-        "pharmacy_custom_main_categories",
-        JSON.stringify(next),
-      );
-    } catch {}
-
-    setFormData((prev) => {
-      const main = val;
-      const hiddenSubs = getHiddenSubCategories(main);
-      const catalogSubs = getSubCategories(main);
-      const customSubs = getCustomSubCategories(main);
-      const mergedSubs = [...new Set([...catalogSubs, ...customSubs])].filter(
-        (sc) => !hiddenSubs.includes(sc),
-      );
-      const firstSub = mergedSubs[0] || "";
-
-      const hiddenMeds = firstSub ? getHiddenMedicines(main, firstSub) : [];
-      const catalogMeds = firstSub ? getCatalogMedicines(main, firstSub) : [];
-      const customMeds = firstSub ? getCustomMedicines(main, firstSub) : [];
-      const mergedMeds = [...new Set([...catalogMeds, ...customMeds])].filter(
-        (m) => !hiddenMeds.includes(m),
-      );
-      const firstMed = mergedMeds[0] || "";
-
-      return {
-        ...prev,
-        mainCategory: main,
-        subCategory: firstSub,
-        category: firstSub || main,
-        medicineName: firstMed,
-        unit: getCategoryUnit(main, firstSub),
-        containerType: getDefaultContainerType(main, firstSub),
-      };
-    });
-
-    setShowAddMainCategory(false);
-    setNewMainCategoryName("");
-    setOptionsVersion((v) => v + 1);
-  };
-
-  const addCustomSubCategory = (name) => {
-    const val = (name || "").trim();
-    const main = formData.mainCategory || "";
-    if (!val || !main) return;
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_subcategories") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[main]) ? map[main] : [];
-      map[main] = [...new Set([...list, val])];
-      localStorage.setItem(
-        "pharmacy_custom_subcategories",
-        JSON.stringify(map),
-      );
-    } catch {}
-
-    setFormData((prev) => {
-      if (prev.mainCategory !== main) return prev;
-      const sub = val;
-      const hiddenMeds = getHiddenMedicines(main, sub);
-      const catalogMeds = getCatalogMedicines(main, sub);
-      const customMeds = getCustomMedicines(main, sub);
-      const mergedMeds = [...new Set([...catalogMeds, ...customMeds])].filter(
-        (m) => !hiddenMeds.includes(m),
-      );
-      const firstMed = mergedMeds[0] || "";
-      return {
-        ...prev,
-        subCategory: sub,
-        category: sub,
-        medicineName: firstMed,
-        unit: getCategoryUnit(main, sub),
-        containerType: getDefaultContainerType(main, sub),
-      };
-    });
-
-    setShowAddSubCategory(false);
-    setNewSubCategoryName("");
-    setOptionsVersion((v) => v + 1);
-  };
-
-  const addCustomMedicineOption = (name) => {
-    const val = (name || "").trim();
-    const main = formData.mainCategory || "";
-    const sub = formData.subCategory || "";
-    if (!val || !main || !sub) return;
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_medicines") || "{}";
-      const map = JSON.parse(raw);
-      const key = getMedicineKey(main, sub);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = [...new Set([...list, val])];
-      localStorage.setItem("pharmacy_custom_medicines", JSON.stringify(map));
-    } catch {}
-
-    setFormData((prev) => ({
-      ...prev,
-      medicineName: val,
-    }));
-
-    setShowAddMedicineOption(false);
-    setNewMedicineName("");
-    setOptionsVersion((v) => v + 1);
+    remapObjectKey(`${storageNamespace}_custom_sub_categories`);
+    remapObjectKey(`${storageNamespace}_custom_medicines`);
+    remapObjectKey(`${storageNamespace}_hidden_sub_categories`);
+    remapObjectKey(`${storageNamespace}_hidden_medicines`);
+    remapObjectKey(`${storageNamespace}_custom_units`);
+    remapObjectKey(`${storageNamespace}_custom_containers`);
+    showToast(`Category renamed to "${newName}"`);
+    setRefreshTick((t) => t + 1);
   };
 
   const mainCategoryOptions = useMemo(() => {
-    const hidden = getHiddenMainCategories();
-    const custom = getCustomMainCategories();
+    const hidden = getHiddenMainCategories(storageNamespace);
+    const custom = getCustomMainCategories(storageNamespace);
     const merged = [...new Set([...catalogMainCategories, ...custom])];
     const base = merged.filter((mc) => !hidden.includes(mc));
     const list = [...base];
     if (formData.mainCategory && !list.includes(formData.mainCategory))
       list.push(formData.mainCategory);
     return list.map((mc) => ({ value: mc, label: formatCatalogLabel(mc) }));
-  }, [formData.mainCategory, optionsVersion]);
+  }, [formData.mainCategory, storageNamespace]);
 
   const subCategoryOptions = useMemo(() => {
     if (!formData.mainCategory) return [];
-    const hidden = getHiddenSubCategories(formData.mainCategory);
+    const hidden = getHiddenSubCategories(formData.mainCategory, storageNamespace);
     const catalogSubs = getSubCategories(formData.mainCategory);
-    const customSubs = getCustomSubCategories(formData.mainCategory);
+    const customSubs = getCustomSubCategories(formData.mainCategory, storageNamespace);
     const merged = [...new Set([...catalogSubs, ...customSubs])];
     const base = merged.filter((sc) => !hidden.includes(sc));
     const list = [...base];
     if (formData.subCategory && !list.includes(formData.subCategory))
       list.push(formData.subCategory);
     return list.map((sc) => ({ value: sc, label: formatCatalogLabel(sc) }));
-  }, [formData.mainCategory, formData.subCategory, optionsVersion]);
+  }, [formData.mainCategory, formData.subCategory, storageNamespace]);
+
   const medicineOptions = useMemo(() => {
     if (!formData.mainCategory || !formData.subCategory) return [];
-    const hidden = getHiddenMedicines(
-      formData.mainCategory,
-      formData.subCategory,
-    );
-    const catalogMeds = getCatalogMedicines(
-      formData.mainCategory,
-      formData.subCategory,
-    );
-    const customMeds = getCustomMedicines(
-      formData.mainCategory,
-      formData.subCategory,
-    );
+    const hidden = getHiddenMedicines(formData.mainCategory, formData.subCategory, storageNamespace);
+    const catalogMeds = getCatalogMedicines(formData.mainCategory, formData.subCategory);
+    const customMeds = getCustomMedicines(formData.mainCategory, formData.subCategory, storageNamespace);
     const merged = [...new Set([...catalogMeds, ...customMeds])];
     const base = merged.filter((med) => !hidden.includes(med));
     const list = [...base];
@@ -996,27 +659,13 @@ export default function Medicines() {
     formData.mainCategory,
     formData.subCategory,
     formData.medicineName,
-    optionsVersion,
+    storageNamespace,
   ]);
 
-  const getCustomUnitsForKey = (key) => {
-    try {
-      const map = JSON.parse(
-        localStorage.getItem("pharmacy_custom_units") || "{}",
-      );
-      const arr = Array.isArray(map[key]) ? map[key] : [];
-      return arr.filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
   const unitOptions = useMemo(() => {
-    const base = getUnitOptionsForCategory(
-      formData.mainCategory,
-      formData.subCategory,
-    );
+    const base = getUnitOptionsForCategory(formData.mainCategory, formData.subCategory);
     const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    const custom = getCustomUnitsForKey(key);
+    const custom = getCustomUnitsForKey(key, storageNamespace);
     const opts = [...new Set([...(base || []), ...(custom || [])])];
     if (formData.unit && !opts.includes(formData.unit))
       return [...opts, formData.unit];
@@ -1025,182 +674,13 @@ export default function Medicines() {
     formData.mainCategory,
     formData.subCategory,
     formData.unit,
-    optionsVersion,
+    storageNamespace,
   ]);
 
-  const addCustomUnit = (unit) => {
-    const val = (unit || "").trim();
-    if (!val) return;
-    const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_units") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = [...new Set([...list, val])];
-      localStorage.setItem("pharmacy_custom_units", JSON.stringify(map));
-    } catch {}
-    setFormData((prev) => ({ ...prev, unit: val }));
-    setCustomUnitValue("");
-    setShowCustomUnit(false);
-    setOptionsVersion((v) => v + 1);
-  };
-
-  const getCustomContainersForKey = (key) => {
-    try {
-      const map = JSON.parse(
-        localStorage.getItem("pharmacy_custom_containers") || "{}",
-      );
-      const arr = Array.isArray(map[key]) ? map[key] : [];
-      return arr.filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
-  const addCustomContainer = (value) => {
-    const val = (value || "").trim();
-    if (!val) return;
-    const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_containers") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = [...new Set([...list, val])];
-      localStorage.setItem("pharmacy_custom_containers", JSON.stringify(map));
-    } catch {}
-    setFormData((prev) => ({ ...prev, containerType: val }));
-    setCustomContainerValue("");
-    setShowCustomContainer(false);
-    setOptionsVersion((v) => v + 1);
-  };
-
-  const removeCustomUnit = (unit) => {
-    const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_units") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = list.filter((x) => x !== unit);
-      localStorage.setItem("pharmacy_custom_units", JSON.stringify(map));
-    } catch {}
-    setOptionsVersion((v) => v + 1);
-    setShowManageUnit(true);
-    setFormData((prev) => {
-      if (prev.unit === unit) {
-        return {
-          ...prev,
-          unit: getCategoryUnit(prev.mainCategory, prev.subCategory),
-        };
-      }
-      return prev;
-    });
-  };
-
-  const removeCustomContainer = (value) => {
-    const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_containers") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = list.filter((x) => x !== value);
-      localStorage.setItem("pharmacy_custom_containers", JSON.stringify(map));
-    } catch {}
-    setOptionsVersion((v) => v + 1);
-    setShowManageContainer(true);
-    setFormData((prev) => {
-      if (prev.containerType === value) {
-        return {
-          ...prev,
-          containerType: getDefaultContainerType(
-            prev.mainCategory,
-            prev.subCategory,
-          ),
-        };
-      }
-      return prev;
-    });
-  };
-
-  const renameCustomUnit = (oldValue, nextValue) => {
-    const oldName = String(oldValue || "").trim();
-    const newName = String(nextValue || "").trim();
-    if (!oldName || !newName) return;
-    if (oldName === newName) return;
-    const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    const custom = getCustomUnitsForKey(key);
-    if (!custom.includes(oldName)) {
-      showToast("Only custom units can be edited");
-      return;
-    }
-    const base = getUnitOptionsForCategory(
-      formData.mainCategory,
-      formData.subCategory,
-    );
-    const all = [...new Set([...(base || []), ...custom])];
-    if (all.includes(newName)) {
-      showToast("Unit already exists");
-      return;
-    }
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_units") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = Array.from(
-        new Set(list.map((x) => (x === oldName ? newName : x))),
-      ).filter(Boolean);
-      localStorage.setItem("pharmacy_custom_units", JSON.stringify(map));
-    } catch {}
-    setOptionsVersion((v) => v + 1);
-    setFormData((prev) =>
-      prev.unit === oldName ? { ...prev, unit: newName } : prev,
-    );
-    showToast("Unit updated");
-  };
-
-  const renameCustomContainer = (oldValue, nextValue) => {
-    const oldName = String(oldValue || "").trim();
-    const newName = String(nextValue || "").trim();
-    if (!oldName || !newName) return;
-    if (oldName === newName) return;
-    const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    const custom = getCustomContainersForKey(key);
-    if (!custom.includes(oldName)) {
-      showToast("Only custom container types can be edited");
-      return;
-    }
-    const base = getContainerOptions(
-      formData.mainCategory,
-      formData.subCategory,
-    );
-    const all = [...new Set([...(base || []), ...custom])];
-    if (all.includes(newName)) {
-      showToast("Container already exists");
-      return;
-    }
-    try {
-      const raw = localStorage.getItem("pharmacy_custom_containers") || "{}";
-      const map = JSON.parse(raw);
-      const list = Array.isArray(map[key]) ? map[key] : [];
-      map[key] = Array.from(
-        new Set(list.map((x) => (x === oldName ? newName : x))),
-      ).filter(Boolean);
-      localStorage.setItem("pharmacy_custom_containers", JSON.stringify(map));
-    } catch {}
-    setOptionsVersion((v) => v + 1);
-    setFormData((prev) =>
-      prev.containerType === oldName
-        ? { ...prev, containerType: newName }
-        : prev,
-    );
-    showToast("Container updated");
-  };
-
   const containerOptions = useMemo(() => {
-    const base = getContainerOptions(
-      formData.mainCategory,
-      formData.subCategory,
-    );
+    const base = getContainerOptions(formData.mainCategory, formData.subCategory);
     const key = getCategoryKey(formData.mainCategory, formData.subCategory);
-    const custom = getCustomContainersForKey(key);
+    const custom = getCustomContainersForKey(key, storageNamespace);
     const opts = [...new Set([...(base || []), ...(custom || [])])];
     if (formData.containerType && !opts.includes(formData.containerType))
       return [...opts, formData.containerType];
@@ -1209,16 +689,8 @@ export default function Medicines() {
     formData.mainCategory,
     formData.subCategory,
     formData.containerType,
-    optionsVersion,
+    storageNamespace,
   ]);
-
-  const currentCategoryKey = getCategoryKey(
-    formData.mainCategory,
-    formData.subCategory,
-  );
-  const customUnitsForCurrent = getCustomUnitsForKey(currentCategoryKey);
-  const customContainersForCurrent =
-    getCustomContainersForKey(currentCategoryKey);
 
   useEffect(() => {
     fetchMedicines();
@@ -1236,7 +708,7 @@ export default function Medicines() {
   const fetchMedicines = async () => {
     try {
       setLoading(true);
-      const response = await pharmacyMedicinesAPI.getAll();
+      const response = await medicinesAPI.getAll();
       const normalized = (response.data || []).map(hydrateMedicine);
       setMedicines(normalized);
     } catch (error) {
@@ -1251,8 +723,8 @@ export default function Medicines() {
     try {
       // Fetch both 'pending' and 'partial' drafts so partially-reviewed invoices stay visible
       const [pendingRes, partialRes] = await Promise.all([
-        pharmacyPurchaseDraftsAPI.getAll({ status: 'pending' }),
-        pharmacyPurchaseDraftsAPI.getAll({ status: 'partial' }),
+        purchaseDraftsAPI.getAll({ status: 'pending' }),
+        purchaseDraftsAPI.getAll({ status: 'partial' }),
       ]);
       const combined = [
         ...(pendingRes.data || []),
@@ -1270,12 +742,12 @@ export default function Medicines() {
   const handleApproveDraft = async (draftId) => {
     try {
       setLoading(true);
-      await pharmacyPurchaseDraftsAPI.approve(draftId, { reviewedBy: "Admin" });
+      await purchaseDraftsAPI.approve(draftId, { reviewedBy: "Admin" });
       showToast("All items approved and added to inventory");
 
       // Delete the draft after all items are approved
       try {
-        await pharmacyPurchaseDraftsAPI.delete(draftId);
+        await purchaseDraftsAPI.delete(draftId);
         console.log("Purchase draft deleted after full approval:", draftId);
       } catch (deleteErr) {
         console.error("Error deleting draft after approval:", deleteErr);
@@ -1293,12 +765,12 @@ export default function Medicines() {
   const handleRejectDraft = async (draftId, reason = "") => {
     try {
       setLoading(true);
-      await pharmacyPurchaseDraftsAPI.reject(draftId, { reviewedBy: "Admin", reviewComments: reason });
+      await purchaseDraftsAPI.reject(draftId, { reviewedBy: "Admin", reviewComments: reason });
       showToast("All items rejected");
 
       // Delete the draft after all items are rejected
       try {
-        await pharmacyPurchaseDraftsAPI.delete(draftId);
+        await purchaseDraftsAPI.delete(draftId);
         console.log("Purchase draft deleted after full rejection:", draftId);
       } catch (deleteErr) {
         console.error("Error deleting draft after rejection:", deleteErr);
@@ -1315,12 +787,12 @@ export default function Medicines() {
   const handleApproveItem = async (draftId, itemId) => {
     try {
       setLoading(true);
-      await pharmacyPurchaseDraftsAPI.approveItem(draftId, itemId, { reviewedBy: "Admin" });
+      await purchaseDraftsAPI.approveItem(draftId, itemId, { reviewedBy: "Admin" });
       showToast("Item approved and added to inventory");
 
       // Check if all items in the draft are now processed (approved or rejected)
       try {
-        const draftRes = await pharmacyPurchaseDraftsAPI.getById(draftId);
+        const draftRes = await purchaseDraftsAPI.getById(draftId);
         const draft = draftRes.data;
         const allItems = draft?.items || [];
         const allProcessed = allItems.length > 0 && allItems.every(
@@ -1328,7 +800,7 @@ export default function Medicines() {
         );
 
         if (allProcessed) {
-          await pharmacyPurchaseDraftsAPI.delete(draftId);
+          await purchaseDraftsAPI.delete(draftId);
           console.log("Purchase draft deleted after all items processed:", draftId);
           showToast("All items processed - draft deleted");
         }
@@ -1348,12 +820,12 @@ export default function Medicines() {
   const handleRejectItem = async (draftId, itemId, reason = "") => {
     try {
       setLoading(true);
-      await pharmacyPurchaseDraftsAPI.rejectItem(draftId, itemId, { reviewedBy: "Admin", reviewComments: reason });
+      await purchaseDraftsAPI.rejectItem(draftId, itemId, { reviewedBy: "Admin", reviewComments: reason });
       showToast("Item rejected");
 
       // Check if all items in the draft are now processed (approved or rejected)
       try {
-        const draftRes = await pharmacyPurchaseDraftsAPI.getById(draftId);
+        const draftRes = await purchaseDraftsAPI.getById(draftId);
         const draft = draftRes.data;
         const allItems = draft?.items || [];
         const allProcessed = allItems.length > 0 && allItems.every(
@@ -1361,7 +833,7 @@ export default function Medicines() {
         );
 
         if (allProcessed) {
-          await pharmacyPurchaseDraftsAPI.delete(draftId);
+          await purchaseDraftsAPI.delete(draftId);
           console.log("Purchase draft deleted after all items processed:", draftId);
           showToast("All items processed - draft deleted");
         }
@@ -1380,9 +852,9 @@ export default function Medicines() {
   const fetchAlerts = async () => {
     try {
       const [lowStockRes, expiringRes, expiredRes] = await Promise.all([
-        pharmacyMedicinesAPI.getLowStock(),
-        pharmacyMedicinesAPI.getExpiring(),
-        pharmacyMedicinesAPI.getExpired(),
+        medicinesAPI.getLowStock(),
+        medicinesAPI.getExpiring(),
+        medicinesAPI.getExpired(),
       ]);
       setAlerts({
         lowStock: lowStockRes.data?.length || 0,
@@ -1396,7 +868,7 @@ export default function Medicines() {
 
   const fetchSuppliers = async () => {
     try {
-      const response = await suppliersAPI.getAll("pharmacy", "active");
+      const response = await resolvedSuppliersAPI.getAll(portalName, "active");
       const list = (response.data || []).map((s) => ({
         id: s._id,
         _id: s._id,
@@ -1404,12 +876,12 @@ export default function Medicines() {
       }));
       setSuppliers(list);
       try {
-        localStorage.setItem("pharmacy_suppliers", JSON.stringify(list));
+        localStorage.setItem(`${storageNamespace}_suppliers`, JSON.stringify(list));
       } catch {}
     } catch (error) {
       console.error("Fetch suppliers error:", error);
       try {
-        const storedSuppliers = localStorage.getItem("pharmacy_suppliers");
+        const storedSuppliers = localStorage.getItem(`${storageNamespace}_suppliers`);
         if (storedSuppliers) {
           setSuppliers(JSON.parse(storedSuppliers));
         } else {
@@ -1421,7 +893,7 @@ export default function Medicines() {
 
   const fetchCompanies = async () => {
     try {
-      const response = await companiesAPI.getAll("pharmacy", "active");
+      const response = await resolvedCompaniesAPI.getAll(portalName, "active");
       setCompanies(response.data || []);
     } catch (error) {
       console.error("Fetch companies error:", error);
@@ -1503,6 +975,68 @@ export default function Medicines() {
     setTimeout(() => setToast(""), 3000);
   };
 
+  const createEditDraftAndNavigate = async (medicine) => {
+    try {
+      setLoading(true);
+      // Create a draft item from the existing medicine
+      const draftItem = {
+        mainCategory: medicine.mainCategory || "",
+        subCategory: medicine.subCategory || "",
+        category: medicine.subCategory || medicine.mainCategory || medicine.category || "",
+        medicineName: medicine.medicineName || "",
+        genericName: medicine.genericName || "",
+        batchNo: medicine.batchNo || "",
+        barcode: medicine.barcode || "",
+        expiryDate: medicine.expiryDate,
+        qtyPacks: medicine.qtyPacks || 0,
+        unitsPerPack: medicine.unitsPerPack || 1,
+        buyPerPack: medicine.buyPerPack || 0,
+        salePerPack: medicine.salePerPack || 0,
+        totalItems: medicine.totalItems || (medicine.quantity || 0),
+        buyPerUnit: medicine.purchasePrice || 0,
+        salePerUnit: medicine.salePrice || 0,
+        minStock: medicine.minStock || 0,
+        defaultDiscount: medicine.defaultDiscount || 0,
+        lineTaxType: medicine.lineTaxType || "%",
+        lineTaxValue: medicine.lineTaxValue || 0,
+        unit: medicine.unit || "pieces",
+        containerType: medicine.containerType || "",
+        itemStatus: "pending",
+        // Store the original medicine ID so we know which to update when approving!
+        originalMedicineId: medicine._id || medicine.id,
+      };
+
+      // Create the draft payload
+      const draftPayload = {
+        invoiceNo: medicine.invoiceNo || `EDIT-${Date.now()}`,
+        invoiceDate: new Date(),
+        portal: portalName,
+        supplierName: medicine.supplierName || "Unknown",
+        supplierId: medicine.supplierId || undefined,
+        companyId: medicine.companyId || undefined,
+        items: [draftItem],
+        invoiceTaxes: [],
+        grossTotal: draftItem.qtyPacks * draftItem.buyPerPack,
+        totalLineTaxes: 0,
+        totalInvoiceTaxes: 0,
+        netTotal: draftItem.qtyPacks * draftItem.buyPerPack,
+        status: "pending",
+      };
+
+      // Create the draft
+      const res = await purchaseDraftsAPI.create(draftPayload);
+      const newDraft = res.data;
+      
+      // Navigate to add invoice page with the new draft ID!
+      navigate(addInvoicePath || `${basePath}/add-invoice`, { state: { draftId: newDraft._id || newDraft.id } });
+    } catch (err) {
+      console.error("Error creating edit draft:", err);
+      showToast("Failed to create edit draft!");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const openModal = async (medicine = null) => {
     fetchSuppliers();
     fetchCompanies();
@@ -1510,7 +1044,7 @@ export default function Medicines() {
     if (medicine) {
       let full = medicine;
       try {
-        const resp = await pharmacyMedicinesAPI.getById(
+        const resp = await medicinesAPI.getById(
           medicine._id || medicine.id,
         );
         if (resp && resp.data) full = resp.data;
@@ -1591,7 +1125,7 @@ export default function Medicines() {
     const name = (newCompanyData.supplierName || "").trim();
     if (!name) return;
     try {
-      await suppliersAPI.create({
+      await resolvedSuppliersAPI.create({
         supplierName: name,
         contactPerson: newCompanyData.contactPerson || "",
         phone: newCompanyData.phone || "",
@@ -1600,7 +1134,7 @@ export default function Medicines() {
         city: "",
         category: "",
         notes: "",
-        portal: "pharmacy",
+        portal: portalName,
       });
       await fetchSuppliers();
       setSupplierSelection(name);
@@ -1620,14 +1154,14 @@ export default function Medicines() {
     if (!newSupplierInvData.name.trim()) return;
     try {
       setSavingSupplier(true);
-      const created = await suppliersAPI.create({
+      const created = await resolvedSuppliersAPI.create({
         supplierName: newSupplierInvData.name.trim(),
         phone: newSupplierInvData.phone || "",
         address: newSupplierInvData.address || "",
         taxId: newSupplierInvData.taxId || "",
         status: newSupplierInvData.status || "active",
         companyId: newSupplierInvData.companyId || null,
-        portal: "pharmacy",
+        portal: portalName,
         contactPerson: "", email: "", city: "", notes: "",
       });
       await fetchSuppliers();
@@ -1650,10 +1184,10 @@ export default function Medicines() {
     if (!newCompanyInvData.companyName.trim()) return;
     try {
       setSavingCompany(true);
-      await companiesAPI.create({
+      await resolvedCompaniesAPI.create({
         companyName: newCompanyInvData.companyName.trim(),
         status: newCompanyInvData.status || "active",
-        portal: "pharmacy",
+        portal: portalName,
       });
       await fetchCompanies();
       setFormData((prev) => {
@@ -1697,17 +1231,17 @@ export default function Medicines() {
       return;
     }
 
-    const hiddenSubs = getHiddenSubCategories(main);
+    const hiddenSubs = getHiddenSubCategories(main, storageNamespace);
     const catalogSubs = getSubCategories(main);
-    const customSubs = getCustomSubCategories(main);
+    const customSubs = getCustomSubCategories(main, storageNamespace);
     const mergedSubs = [...new Set([...catalogSubs, ...customSubs])].filter(
       (sc) => !hiddenSubs.includes(sc),
     );
     const sub = mergedSubs[0] || "";
 
-    const hiddenMeds = sub ? getHiddenMedicines(main, sub) : [];
+    const hiddenMeds = sub ? getHiddenMedicines(main, sub, storageNamespace) : [];
     const catalogMeds = sub ? getCatalogMedicines(main, sub) : [];
-    const customMeds = sub ? getCustomMedicines(main, sub) : [];
+    const customMeds = sub ? getCustomMedicines(main, sub, storageNamespace) : [];
     const mergedMeds = [...new Set([...catalogMeds, ...customMeds])].filter(
       (m) => !hiddenMeds.includes(m),
     );
@@ -1743,9 +1277,9 @@ export default function Medicines() {
       return;
     }
 
-    const hiddenMeds = getHiddenMedicines(main, sub);
+    const hiddenMeds = getHiddenMedicines(main, sub, storageNamespace);
     const catalogMeds = getCatalogMedicines(main, sub);
-    const customMeds = getCustomMedicines(main, sub);
+    const customMeds = getCustomMedicines(main, sub, storageNamespace);
     const mergedMeds = [...new Set([...catalogMeds, ...customMeds])].filter(
       (m) => !hiddenMeds.includes(m),
     );
@@ -1786,7 +1320,7 @@ export default function Medicines() {
           optionEquals(s.name || "", resolvedSupplierName),
         );
         if (!existing) {
-          await suppliersAPI.create({
+          await resolvedSuppliersAPI.create({
             supplierName: resolvedSupplierName,
             contactPerson: "",
             phone: "",
@@ -1795,7 +1329,7 @@ export default function Medicines() {
             city: "",
             category: "",
             notes: "",
-            portal: "pharmacy",
+            portal: portalName,
           });
         }
         await fetchSuppliers();
@@ -1813,7 +1347,7 @@ export default function Medicines() {
           : formData.mlPerVial,
       };
       if (editingMedicine) {
-        await pharmacyMedicinesAPI.update(editingMedicine._id, payload);
+        await medicinesAPI.update(editingMedicine._id, payload);
         showToast("Medicine updated successfully");
       } else {
         // Create one medicine record per invoice item
@@ -1846,7 +1380,7 @@ export default function Medicines() {
             containerType: item.containerType || getDefaultContainerType(item.mainCategory, item.subCategory),
             mlPerVial: 0,
           };
-          const response = await pharmacyMedicinesAPI.create(itemPayload);
+          const response = await medicinesAPI.create(itemPayload);
           // Update supplier purchase history per item
           if (itemPayload.purchasePrice > 0 && itemPayload.quantity > 0) {
             try {
@@ -1854,13 +1388,13 @@ export default function Medicines() {
                 optionEquals(s.name || s.supplierName, resolvedSupplierName),
               );
               if (supplier) {
-                await suppliersAPI.addPurchase(supplier._id || supplier.id, {
+                await resolvedSuppliersAPI.addPurchase(supplier._id || supplier.id, {
                   productName: itemPayload.medicineName,
                   quantity: Number(itemPayload.quantity),
                   unitPrice: Number(itemPayload.purchasePrice),
                   invoiceNumber: formData.invoiceNo || `MED-${Date.now()}`,
                   totalPrice: Number(itemPayload.purchasePrice) * Number(itemPayload.quantity),
-                  portal: "pharmacy",
+                  portal: portalName,
                 });
               }
             } catch (supErr) {
@@ -1887,7 +1421,7 @@ export default function Medicines() {
     if (!medicineToDelete) return;
 
     try {
-      await pharmacyMedicinesAPI.delete(medicineToDelete._id);
+      await medicinesAPI.delete(medicineToDelete._id);
       showToast("Medicine deleted successfully");
       fetchMedicines();
       fetchAlerts();
@@ -1964,7 +1498,7 @@ export default function Medicines() {
   const exportToExcelDetailed = async () => {
     try {
       setLoading(true);
-      const salesRes = await pharmacySalesAPI.getAll();
+      const salesRes = await salesAPI.getAll();
       const sales = Array.isArray(salesRes?.data) ? salesRes.data : [];
       const agg = new Map();
       sales.forEach((sale) => {
@@ -2087,12 +1621,12 @@ export default function Medicines() {
         let existing = knownByBarcode.get(bc);
         if (existing && existing._id) return existing;
         try {
-          const direct = await pharmacyMedicinesAPI.findByBarcode(barcode);
+          const direct = await medicinesAPI.findByBarcode(barcode);
           const med = direct?.data || (direct && direct.success && direct.data);
           if (med && med._id) return med;
         } catch {}
         try {
-          const res = await pharmacyMedicinesAPI.search(barcode);
+          const res = await medicinesAPI.search(barcode);
           const list = Array.isArray(res?.data)
             ? res.data
             : Array.isArray(res)
@@ -2102,7 +1636,7 @@ export default function Medicines() {
           if (existing && existing._id) return existing;
         } catch {}
         try {
-          const all = await pharmacyMedicinesAPI.getAll();
+          const all = await medicinesAPI.getAll();
           const list = Array.isArray(all?.data)
             ? all.data
             : Array.isArray(all)
@@ -2120,13 +1654,13 @@ export default function Medicines() {
         if (bc) {
           let existing = await tryFindExisting(payload.barcode);
           if (existing && existing._id) {
-            await pharmacyMedicinesAPI.update(existing._id, payload);
+            await medicinesAPI.update(existing._id, payload);
             knownByBarcode.set(bc, existing);
             return "updated";
           }
         }
         try {
-          const created = await pharmacyMedicinesAPI.create(payload);
+          const created = await medicinesAPI.create(payload);
           if (bc) {
             const id = created?.data?._id || created?._id;
             if (id) knownByBarcode.set(bc, { _id: id });
@@ -2142,7 +1676,7 @@ export default function Medicines() {
             try {
               const existing = await tryFindExisting(payload.barcode);
               if (existing && existing._id) {
-                await pharmacyMedicinesAPI.update(existing._id, payload);
+                await medicinesAPI.update(existing._id, payload);
                 knownByBarcode.set(bc, existing);
                 return "updated";
               }
@@ -2237,10 +1771,10 @@ export default function Medicines() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-            Medicine Inventory
+            {title}
           </h1>
           <p className="text-slate-500 mt-1">
-            Manage pharmacy medicines and stock
+            {subtitle}
           </p>
         </div>
         <div className="flex gap-2">
@@ -2264,7 +1798,7 @@ export default function Medicines() {
             <FiUpload /> Import
           </button>
           <button
-            onClick={() => navigate("/pharmacy/add-invoice")}
+            onClick={() => navigate(addInvoicePath || `${basePath}/add-invoice`)}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg"
           >
             <FiPlus /> Add Invoice
@@ -2529,9 +2063,9 @@ export default function Medicines() {
                             {/* Quantity */}
                             <td className="px-4 py-3">
                               <p className="font-medium text-slate-800 text-sm">{item.qtyPacks || 0} packs</p>
-                              <p className="text-xs text-slate-500">{item.unitsPerPack || 1} {item.unit || "units"}/pack</p>
+                              <p className="text-xs text-slate-500">{item.unitsPerPack || 1} items/pack</p>
                               <p className="text-xs text-blue-600 font-medium">
-                                = {(item.qtyPacks || 0) * (item.unitsPerPack || 1)} {item.unit || "units"}
+                                = {item.totalItems != null ? Number(item.totalItems) : (item.qtyPacks || 0) * (item.unitsPerPack || 1)} items
                               </p>
                             </td>
 
@@ -2581,11 +2115,11 @@ export default function Medicines() {
                                     ✓ Approve
                                   </button>
                                   <button
-                                    onClick={() => navigate("/pharmacy/add-invoice", { state: { draftId: item.draftId } })}
+                                    onClick={() => navigate(addInvoicePath || `${basePath}/add-invoice`, { state: { draftId: item.draftId } })}
                                     disabled={loading}
                                     className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium w-full flex items-center justify-center gap-1"
                                   >
-                                    <FiEdit2 className="w-3 h-3" /> Edit
+                                    <FiPlay className="w-3 h-3" /> Edit
                                   </button>
                                   <button
                                     onClick={() => {
@@ -2766,12 +2300,6 @@ export default function Medicines() {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => openModal(medicine)}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-                            >
-                              <FiEdit2 className="w-4 h-4" />
-                            </button>
                             <button
                               onClick={() => openDeleteModal(medicine)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg"

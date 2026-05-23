@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useSettings } from '../../context/SettingsContext'
-import { medicinesAPI, petsAPI, prescriptionsAPI, appointmentsAPI, doctorProfileAPI, pharmacyMedicinesAPI, labRequestsAPI } from '../../services/api'
+import { medicinesAPI, vaccinesAPI, petsAPI, prescriptionsAPI, appointmentsAPI, doctorProfileAPI, pharmacyMedicinesAPI, labRequestsAPI } from '../../services/api'
 import PrintPrescription from '../../components/print/PrintPrescription'
 
 export default function DoctorPrescription(){
   const { settings } = useSettings()
+  const location = useLocation()
   const [patientId, setPatientId] = useState('')
   const [patient, setPatient] = useState(null)
   const [notFound, setNotFound] = useState('')
   const [medicines, setMedicines] = useState([])
+  const [vaccines, setVaccines] = useState([])
   const [regimens, setRegimens] = useState([]) // grouped by condition
+  const [vaccineRegimens, setVaccineRegimens] = useState([]) // grouped by condition
   const [items, setItems] = useState([]) // selected medicines for prescription
   const [note, setNote] = useState('')
   const [allPatients, setAllPatients] = useState([])
@@ -35,9 +39,21 @@ export default function DoctorPrescription(){
   const [addNoteModal, setAddNoteModal] = useState({ open: false, type: 'hx', value: '' })
   const [deleteNoteModal, setDeleteNoteModal] = useState({ open: false, type: '', value: '' })
   const [dupMedModal, setDupMedModal] = useState({ open: false, regimen: null })
+  const [dupVaccineModal, setDupVaccineModal] = useState({ open: false, regimen: null })
   const [hiddenRegimens, setHiddenRegimens] = useState([])
+  const [hiddenVaccineRegimens, setHiddenVaccineRegimens] = useState([])
   const [showReferralSuccess, setShowReferralSuccess] = useState(false)
   const [referralData, setReferralData] = useState(null)
+  const [editingId, setEditingId] = useState(null) // Track if editing existing prescription
+  const lastLoadedRef = useRef(null) // Track last loaded prescription to prevent duplicates
+  const isEditingRef = useRef(false) // Track editing mode immediately (for useEffect timing)
+  const [toast, setToast] = useState('') // Toast message state
+
+  // Show toast message
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(''), 3000)
+  }
 
   useEffect(() => {
     try {
@@ -153,6 +169,9 @@ export default function DoctorPrescription(){
     setPreview(null)
     setPreviewPatient(null)
     setResetOnClose(false)
+    setEditingId(null) // Clear editing state
+    lastLoadedRef.current = null // Clear loaded prescription ref
+    isEditingRef.current = false // Clear editing mode ref
     try { localStorage.removeItem('doctor_prescription_draft') } catch (e) {}
   }
 
@@ -231,20 +250,105 @@ export default function DoctorPrescription(){
     }
   }
 
+  useEffect(() => {
+    const prx = location?.state?.loadPrescription
+    if (!prx) {
+      console.log('No prescription to load from location.state')
+      return
+    }
+    
+    const prxId = prx.id || prx._id
+    
+    // Prevent re-loading same prescription using ref
+    if (lastLoadedRef.current === prxId) {
+      console.log('Already loaded prescription:', prxId, '- skipping')
+      return
+    }
+    
+    console.log('=== LOADING PRESCRIPTION FOR EDIT ===')
+    console.log('Prescription ID:', prxId)
+    console.log('Full prescription object:', JSON.stringify(prx, null, 2))
+    lastLoadedRef.current = prxId
+    
+    try {
+      const merged = mergePatientVitals(prx.patient || {}, prx)
+      console.log('Merged patient data:', merged)
+      
+      // Set patient ID
+      const patientIdValue = String(merged?.id || prx.patient?.id || '').trim()
+      console.log('Setting patient ID:', patientIdValue)
+      setPatientId(patientIdValue)
+      
+      // Set patient with all vitals - explicitly set all fields
+      const patientData = {
+        ...(merged || {}),
+        id: merged?.id || prx.patient?.id || '',
+        petName: merged?.petName || prx.patient?.petName || prx.patient?.name || '',
+        ownerName: merged?.ownerName || prx.patient?.ownerName || prx.patient?.owner || '',
+        species: merged?.species || prx.patient?.species || '',
+        breed: merged?.breed || prx.patient?.breed || '',
+        age: merged?.age || prx.patient?.age || '',
+        gender: merged?.gender || prx.patient?.gender || '',
+        weightKg: merged?.weightKg || prx.patient?.weightKg || prx.notes?.vitals?.weightKg || '',
+        tempF: merged?.tempF || prx.patient?.tempF || prx.notes?.vitals?.tempF || '',
+        tempUnit: merged?.tempUnit || prx.patient?.tempUnit || prx.notes?.vitals?.tempUnit || '°F',
+        dehydration: merged?.dehydration || prx.patient?.dehydration || prx.notes?.vitals?.dehydration || '',
+      }
+      console.log('Setting patient data:', patientData)
+      setPatient(patientData)
+      
+      // Set items (medicines and vaccines)
+      const loadedItems = Array.isArray(prx.items) ? prx.items : []
+      console.log('Setting items:', loadedItems.length, 'items')
+      setItems(loadedItems)
+      
+      // Set notes
+      const notesData = {
+        hx: prx.notes?.hx || [],
+        oe: prx.notes?.oe || [],
+        dx: prx.notes?.dx || [],
+        advice: prx.notes?.advice || [],
+        tests: prx.notes?.tests || [],
+      }
+      console.log('Setting notes:', notesData)
+      setNotes(notesData)
+      
+      setNote(prx.note || '')
+      
+      // Set editing ID to track we're editing an existing prescription
+      console.log('Setting editingId:', prxId)
+      setEditingId(prxId)
+      isEditingRef.current = true // Set immediately for other useEffects
+      
+      console.log('=== PRESCRIPTION LOAD COMPLETE ===')
+      
+      setTimeout(() => {
+        try {
+          const prescriptionForm = document.querySelector('.prescription-form-section')
+          if (prescriptionForm) prescriptionForm.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        } catch {}
+      }, 50)
+    } catch (e) {
+      console.error('Error loading prescription from history:', e)
+    }
+  }, [location?.state?.loadPrescription])
+
   useEffect(()=>{
     const fetchData = async () => {
       try {
         // Fetch medicines from MongoDB
         const medicinesResponse = await medicinesAPI.getAll()
-        const raw = medicinesResponse?.data || []
-        setRegimens(Array.isArray(raw) ? raw : [])
+        const rawMeds = medicinesResponse?.data || medicinesResponse || []
+        const medRegimens = Array.isArray(rawMeds) ? rawMeds : []
+        setRegimens(medRegimens)
+
         // Flatten: each regimen row becomes one suggestion item
-        const flat = []
-        for (const m of (Array.isArray(raw)? raw : [])){
-          if (m && Array.isArray(m.rows)){
-            m.rows.forEach((r, idx)=>{
-              flat.push({
-                id: `${m.id||'M'}-${idx}`,
+        const flatMeds = []
+        for (const m of medRegimens) {
+          if (m && Array.isArray(m.rows)) {
+            m.rows.forEach((r, idx) => {
+              flatMeds.push({
+                id: `${m.id || m._id || 'M'}-${idx}`,
                 name: r.name,
                 composition: r.composition || r.dosage,
                 ingredients: r.ingredients || '',
@@ -254,26 +358,27 @@ export default function DoctorPrescription(){
                 perMl: r.perMl || '',
                 dose: r.dose || '',
                 unit: r.unit || '',
-                description: [m.condition? `Cond: ${m.condition}`: '', r.route? `${r.route}`:'', (r.dose||r.unit)? `${r.dose||''}${r.unit||''}`:'', r.instructions||''].filter(Boolean).join(' â€¢ '),
+                description: [m.condition ? `Cond: ${m.condition}` : '', r.route ? `${r.route}` : '', (r.dose || r.unit) ? `${r.dose || ''}${r.unit || ''}` : '', r.instructions || ''].filter(Boolean).join(' • '),
               })
             })
-          } else if (m && (m.name || m.dosage || m.description)){
-            flat.push(m)
+          } else if (m && (m.name || m.dosage || m.description)) {
+            flatMeds.push(m)
           }
         }
-        setMedicines(flat)
+        setMedicines(flatMeds)
       } catch (e) {
         console.error('Error fetching medicines:', e)
         // Fallback to localStorage
         try {
-          const raw = JSON.parse(localStorage.getItem('doctor_medicines')||'[]')
-          setRegimens(Array.isArray(raw) ? raw : [])
+          const raw = JSON.parse(localStorage.getItem('doctor_medicines') || '[]')
+          const medRegs = Array.isArray(raw) ? raw : []
+          setRegimens(medRegs)
           const flat = []
-          for (const m of (Array.isArray(raw)? raw : [])){
-            if (m && Array.isArray(m.rows)){
-              m.rows.forEach((r, idx)=>{
+          for (const m of medRegs) {
+            if (m && Array.isArray(m.rows)) {
+              m.rows.forEach((r, idx) => {
                 flat.push({
-                  id: `${m.id||'M'}-${idx}`,
+                  id: `${m.id || m._id || 'M'}-${idx}`,
                   name: r.name,
                   composition: r.composition || r.dosage,
                   ingredients: r.ingredients || '',
@@ -283,15 +388,80 @@ export default function DoctorPrescription(){
                   perMl: r.perMl || '',
                   dose: r.dose || '',
                   unit: r.unit || '',
-                  description: [m.condition? `Cond: ${m.condition}`: '', r.route? `${r.route}`:'', (r.dose||r.unit)? `${r.dose||''}${r.unit||''}`:'', r.instructions||''].filter(Boolean).join(' â€¢ '),
+                  description: [m.condition ? `Cond: ${m.condition}` : '', r.route ? `${r.route}` : '', (r.dose || r.unit) ? `${r.dose || ''}${r.unit || ''}` : '', r.instructions || ''].filter(Boolean).join(' • '),
                 })
               })
-            } else if (m && (m.name || m.dosage || m.description)){
+            } else if (m && (m.name || m.dosage || m.description)) {
               flat.push(m)
             }
           }
           setMedicines(flat)
         } catch (e) {}
+      }
+
+      try {
+        // Fetch vaccines from MongoDB
+        console.log('Fetching vaccines from database...');
+        const vaccinesResponse = await vaccinesAPI.getAll()
+        const rawVac = vaccinesResponse?.data || vaccinesResponse || []
+        const vacRegimens = Array.isArray(rawVac) ? rawVac : []
+        setVaccineRegimens(vacRegimens)
+
+        const flatVac = []
+        for (const v of vacRegimens) {
+      if (v && Array.isArray(v.rows)) {
+        v.rows.forEach((r, idx) => {
+          // Flatten vaccine rows but keep shots info if available
+          const shots = Array.isArray(r.shots) ? r.shots : []
+          flatVac.push({
+            id: `${v.id || v._id || 'V'}-${idx}`,
+            name: r.name,
+            condition: v.condition || '',
+            route: r.route || '',
+            instructions: r.instructions || '',
+            shots: shots.length > 0 ? shots : [{
+              dateGiven: r.dateGiven || '',
+              nextDue: r.nextDue || '',
+              vet: r.vet || '',
+              shotStage: r.shotStage || '',
+            }],
+            isVaccine: true,
+            description: [v.condition ? `Cond: ${v.condition}` : '', r.route ? `${r.route}` : '', (r.shotStage || (shots[0]?.shotStage)) ? `Stage: ${r.shotStage || shots[0]?.shotStage}` : '', r.instructions || ''].filter(Boolean).join(' • '),
+          })
+        })
+      }
+        }
+        setVaccines(flatVac)
+      } catch (e) {
+        console.error('Error fetching vaccines:', e)
+        // Fallback to localStorage
+        try {
+          const raw = JSON.parse(localStorage.getItem('doctor_vaccines') || '[]')
+          const vacRegs = Array.isArray(raw) ? raw : []
+          setVaccineRegimens(vacRegs)
+          const flat = []
+      if (v && Array.isArray(v.rows)) {
+        v.rows.forEach((r, idx) => {
+          const shots = Array.isArray(r.shots) ? r.shots : []
+          flat.push({
+            id: `${v.id || v._id || 'V'}-${idx}`,
+            name: r.name,
+            condition: v.condition || '',
+            route: r.route || '',
+            instructions: r.instructions || '',
+            shots: shots.length > 0 ? shots : [{
+              dateGiven: r.dateGiven || '',
+              nextDue: r.nextDue || '',
+              vet: r.vet || '',
+              shotStage: r.shotStage || '',
+            }],
+            isVaccine: true,
+            description: [v.condition ? `Cond: ${v.condition}` : '', r.route ? `${r.route}` : '', (r.shotStage || (shots[0]?.shotStage)) ? `Stage: ${r.shotStage || shots[0]?.shotStage}` : '', r.instructions || ''].filter(Boolean).join(' • '),
+          })
+        })
+      }
+          setVaccines(flat)
+        } catch (err) {}
       }
 
       try {
@@ -327,25 +497,32 @@ export default function DoctorPrescription(){
       }
       
       // Load draft if any (still from localStorage as it's temporary)
-      try {
-        const draft = JSON.parse(localStorage.getItem('doctor_prescription_draft')||'null')
-        if(draft){
-          setPatientId(draft.patientId || '')
-          setPatient(draft.patient || null)
-          setItems(Array.isArray(draft.items)? draft.items : [])
-          setNote(draft.note || '')
-          if(draft.notes){
-            const n = draft.notes || {}
-            setNotes({
-              hx: Array.isArray(n.hx) ? n.hx : [],
-              oe: Array.isArray(n.oe) ? n.oe : [],
-              dx: Array.isArray(n.dx) ? n.dx : [],
-              advice: Array.isArray(n.advice) ? n.advice : [],
-              tests: Array.isArray(n.tests) ? n.tests : []
-            })
+      // Skip draft loading if we're loading a prescription for editing
+      const prxToLoad = location?.state?.loadPrescription
+      if (!prxToLoad) {
+        try {
+          const draft = JSON.parse(localStorage.getItem('doctor_prescription_draft')||'null')
+          if(draft){
+            console.log('Loading draft from localStorage')
+            setPatientId(draft.patientId || '')
+            setPatient(draft.patient || null)
+            setItems(Array.isArray(draft.items)? draft.items : [])
+            setNote(draft.note || '')
+            if(draft.notes){
+              const n = draft.notes || {}
+              setNotes({
+                hx: Array.isArray(n.hx) ? n.hx : [],
+                oe: Array.isArray(n.oe) ? n.oe : [],
+                dx: Array.isArray(n.dx) ? n.dx : [],
+                advice: Array.isArray(n.advice) ? n.advice : [],
+                tests: Array.isArray(n.tests) ? n.tests : []
+              })
+            }
           }
-        }
-      } catch (e) {}
+        } catch (e) {}
+      } else {
+        console.log('Skipping draft load - prescription to edit detected')
+      }
       setDraftLoaded(true)
     }
     fetchData()
@@ -359,6 +536,14 @@ export default function DoctorPrescription(){
   }, [patientId, patient, items, note, notes, draftLoaded])
 
   useEffect(()=>{
+    // Skip patient search when editing an existing prescription
+    // The patient data is already loaded from the prescription
+    // Use ref for immediate check (state might not be updated yet)
+    if (editingId || isEditingRef.current) {
+      console.log('Skipping patient search - in editing mode')
+      return
+    }
+    
     const pid = (patientId||'').trim()
     if(!pid){ setPatient(null); setNotFound(''); return }
     const norm = pid.toLowerCase()
@@ -409,7 +594,7 @@ export default function DoctorPrescription(){
       setPatient(null)
       setNotFound('No patient found for the entered ID')
     }
-  },[patientId, allPatients])
+  },[patientId, allPatients, editingId])
 
   // Load patient prescription history
   useEffect(()=>{
@@ -465,33 +650,44 @@ export default function DoctorPrescription(){
         composition: m.composition || m.dosage,
         doseRate: m.doseRate || '',
         perMl: m.perMl || '',
-        ingredients: m.ingredients,
-        description: m.description,
+        ingredients: m.ingredients || '',
+        description: m.description || '',
         route: m.route || '',
         dose: m.dose || '',
         unit: m.unit || '',
         condition: m.condition || '',
         instructions: '',
-        useDehydration: false
+        doseType: 'Weight Based',
+        useDehydration: false,
+        isVaccine: false,
+        shots: [],
       }]
     })
   }
-  const addCondition = (cond) => {
+  const addCondition = (cond, isVaccine = false) => {
     if(!cond || !Array.isArray(cond.rows)) return
     const mapped = cond.rows.map(r => ({
       id: Date.now()+Math.random(),
       name: r.name,
-      composition: r.composition || r.dosage,
+      composition: r.composition || r.dosage || '',
       doseRate: r.doseRate || '',
       perMl: r.perMl || '',
       ingredients: r.ingredients || '',
       route: r.route || '',
       dose: r.dose || '',
       unit: r.unit || '',
+      doseType: isVaccine ? 'Fixed Dose' : (r.doseType || 'Weight Based'),
       condition: cond.condition || '',
-      description: [cond.condition? `Cond: ${cond.condition}`: '', r.route? `${r.route}`:'', (r.dose||r.unit)? `${r.dose||''}${r.unit||''}`:'', r.instructions||''].filter(Boolean).join(' â€¢ '),
+      description: [cond.condition? `Cond: ${cond.condition}`: '', r.route? `${r.route}`:'', (r.dose||r.unit)? `${r.dose||''}${r.unit||''}`:'', r.instructions||''].filter(Boolean).join(' • '),
       instructions: r.instructions || '',
-      useDehydration: false
+      useDehydration: false,
+      isVaccine,
+      shots: Array.isArray(r.shots) ? r.shots : [{
+        dateGiven: r.dateGiven || '',
+        nextDue: r.nextDue || '',
+        vet: r.vet || '',
+        shotStage: r.shotStage || '',
+      }]
     }))
     setItems(prev=>[...prev, ...mapped])
   }
@@ -508,26 +704,26 @@ export default function DoctorPrescription(){
     }
   }
 
-  const hasRegimenAlready = (cond) => {
+  const hasRegimenAlready = (cond, isVaccine = false) => {
     try {
       if (!cond || !Array.isArray(cond.rows)) return false
       const condKey = normalizeKey(cond.condition)
       const rowNames = cond.rows.map(r => normalizeKey(r?.name)).filter(Boolean)
       if (!condKey || rowNames.length === 0) return false
-      return items.some(it => normalizeKey(it?.condition) === condKey && rowNames.includes(normalizeKey(it?.name)))
+      return items.some(it => normalizeKey(it?.condition) === condKey && rowNames.includes(normalizeKey(it?.name)) && !!it.isVaccine === isVaccine)
     } catch {
       return false
     }
   }
 
-  const handleConditionClick = (cond) => {
+  const handleConditionClick = (cond, isVaccine = false) => {
     try {
       if (!cond || !Array.isArray(cond.rows)) return
       const condKey = normalizeKey(cond.condition)
       const rowNames = (cond.rows || []).map(r => normalizeKey(r?.name)).filter(Boolean)
 
       const hasAny = (items || []).some(it => (
-        normalizeKey(it?.condition) === condKey && rowNames.includes(normalizeKey(it?.name))
+        normalizeKey(it?.condition) === condKey && rowNames.includes(normalizeKey(it?.name)) && !!it.isVaccine === isVaccine
       ))
 
       // Toggle behavior:
@@ -535,14 +731,14 @@ export default function DoctorPrescription(){
       // - otherwise -> add all regimen medicines
       if (hasAny) {
         setItems(prev => (prev || []).filter(it => !(
-          normalizeKey(it?.condition) === condKey && rowNames.includes(normalizeKey(it?.name))
+          normalizeKey(it?.condition) === condKey && rowNames.includes(normalizeKey(it?.name)) && !!it.isVaccine === isVaccine
         )))
         return
       }
 
-      addCondition(cond)
+      addCondition(cond, isVaccine)
     } catch {
-      addCondition(cond)
+      addCondition(cond, isVaccine)
     }
   }
 
@@ -590,6 +786,30 @@ export default function DoctorPrescription(){
       unit: m.unit||''
     })
   }
+
+  const tryAttachVaccine = (id, name) => {
+    const v = vaccines.find(vv => String(vv.name || '').toLowerCase() === String(name || '').toLowerCase())
+    if (!v) return
+    setItems(prev => prev.map(x => {
+      if (x.id !== id) return x
+      const shots = Array.isArray(v.shots) ? v.shots : [{
+        dateGiven: v.dateGiven || '',
+        nextDue: v.nextDue || '',
+        vet: v.vet || '',
+        shotStage: v.shotStage || '',
+      }]
+      return {
+        ...x,
+        name: v.name,
+        condition: v.condition || x.condition || '',
+        route: v.route || x.route || '',
+        instructions: v.instructions || x.instructions || '',
+        shots: shots,
+        doseType: 'Fixed Dose',
+        isVaccine: true,
+      }
+    }))
+  }
   const mapPharmacyToRx = (p) => {
     if (!p) return null
     const routeFromCategory = (cat) => {
@@ -614,8 +834,10 @@ export default function DoctorPrescription(){
       unit: p.unit || (String(p.category||'').toLowerCase().includes('inject') ? 'ml' : ''),
       condition: 'General',
       instructions: '',
+      doseType: 'Weight Based',
       useDehydration: false,
-      doseType: 'Weight Based'
+      isVaccine: false,
+      shots: [],
     }
   }
   const addManualFromPharmacy = (id) => {
@@ -632,7 +854,46 @@ export default function DoctorPrescription(){
       return [...list, rx]
     })
   }
-  const updateItem = (id, field, value) => setItems(prev=>prev.map(x=>x.id===id? {...x, [field]: value}: x))
+  // Helper to compute next due date based on shot stage (same as Vaccines page)
+  const calcNextDue = (dateStr, stage) => {
+    if(!dateStr || !stage) return ''
+    const dt = new Date(dateStr)
+    const days = ['1st','2nd','3rd','4th'].includes(stage) ? 21 : 365
+    dt.setDate(dt.getDate() + days)
+    return dt.toISOString().slice(0,10)
+  }
+
+  const addShotToItem = (id) => setItems(prev => prev.map(x => {
+    if (x.id !== id) return x
+    const shots = Array.isArray(x.shots) ? x.shots : []
+    return { ...x, shots: [...shots, { dateGiven: '', nextDue: '', vet: '', shotStage: '' }] }
+  }))
+
+  const removeShotFromItem = (id, sIdx) => setItems(prev => prev.map(x => {
+    if (x.id !== id) return x
+    const shots = Array.isArray(x.shots) ? x.shots : []
+    if (shots.length <= 1) return x
+    return { ...x, shots: shots.filter((_, i) => i !== sIdx) }
+  }))
+
+  const updateItemShot = (id, sIdx, field, value) => setItems(prev => prev.map(x => {
+    if (x.id !== id) return x
+    const shots = Array.isArray(x.shots) ? x.shots : []
+    const newShots = shots.map((s, i) => {
+      if (i !== sIdx) return s
+      const updated = { ...s, [field]: value }
+      if (field === 'dateGiven' || field === 'shotStage') {
+        updated.nextDue = calcNextDue(updated.dateGiven, updated.shotStage)
+      }
+      return updated
+    })
+    return { ...x, shots: newShots }
+  }))
+
+  const updateItem = (id, field, value) => setItems(prev=>prev.map(x=>{
+    if(x.id!==id) return x
+    return { ...x, [field]: value }
+  }))
   const removeItem = (id) => setItems(prev=>prev.filter(x=>x.id!==id))
   const toggleDehydration = (id) => {
     setItems(prev => prev.map(x => {
@@ -647,7 +908,7 @@ export default function DoctorPrescription(){
 
   const save = async () => {
     if(!canSave) {
-      alert('Please select a patient and add at least one medicine')
+      showToast('Please select a patient and add at least one medicine', 'error')
       return
     }
     
@@ -669,21 +930,39 @@ export default function DoctorPrescription(){
     console.log('Patient ID from input:', patientId)
     console.log('Final patientData:', patientData)
     
+    // Build notes object with vitals included
+    const notesWithVitals = {
+      ...notes,
+      vitals: {
+        weightKg: patientData.weightKg || '',
+        tempF: patientData.tempF || '',
+        tempUnit: patientData.tempUnit || '°F',
+        dehydration: patientData.dehydration || '',
+      }
+    }
+
+    // Get original prescription if editing (from location state)
+    const originalPrx = location?.state?.loadPrescription
     const entry = {
-      id: 'PRX-'+Date.now(),
-      when: new Date().toISOString(),
+      id: editingId || 'PRX-'+Date.now(),
+      when: editingId ? (originalPrx?.when || new Date().toISOString()) : new Date().toISOString(),
       patient: patientData,
-      items,
+      items, // Contains medicines and vaccines with full data including nested shots
       note,
-      notes,
+      notes: notesWithVitals, // Contains hx, oe, dx, advice, tests, and vitals
       doctor: JSON.parse(localStorage.getItem('doctor_auth')||'{}'),
     }
     
     try {
-      // Save prescription to MongoDB
-      console.log('Saving prescription to MongoDB:', entry)
-      await prescriptionsAPI.create(entry)
-      console.log('Prescription saved to MongoDB successfully')
+      // Save or update prescription to MongoDB
+      console.log(editingId ? 'Updating prescription in MongoDB:' : 'Saving prescription to MongoDB:', entry)
+      if (editingId) {
+        await prescriptionsAPI.update(editingId, entry)
+        console.log('Prescription updated to MongoDB successfully')
+      } else {
+        await prescriptionsAPI.create(entry)
+        console.log('Prescription saved to MongoDB successfully')
+      }
 
       // Automatically create Lab Sample Intake entries for selected tests (Lab Portal)
       try {
@@ -826,11 +1105,16 @@ export default function DoctorPrescription(){
       
       try { localStorage.removeItem('doctor_prescription_draft') } catch (e) {}
       setResetOnClose(true)
-      openPreview(entry)
+      // Capture editing state before resetting (for toast message)
+      const wasEditing = !!editingId
+      // Reset form and clear editing state
+      resetAll()
+      // Show success message (use captured state)
+      showToast(wasEditing ? 'Prescription updated successfully!' : 'Prescription saved successfully!', 'success')
       
     } catch (error) {
       console.error('Error saving prescription:', error)
-      alert('Failed to save prescription. Please try again.')
+      showToast('Failed to save prescription. Please try again.', 'error')
     }
   }
   const openPreview = (entry) => {
@@ -846,9 +1130,25 @@ export default function DoctorPrescription(){
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-slide-in ${
+          toast.type === 'error' 
+            ? 'bg-red-600 text-white' 
+            : 'bg-emerald-600 text-white'
+        }`}>
+          {toast.type === 'success' ? (
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+          ) : (
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/></svg>
+          )}
+          {toast.message}
+        </div>
+      )}
+      
       <div className="text-center">
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">Create Prescription</h1>
-        <p className="text-slate-500 mt-1">Generate professional prescriptions for your patients</p>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">{editingId ? 'Edit Prescription' : 'Create Prescription'}</h1>
+        <p className="text-slate-500 mt-1">{editingId ? 'Modify and update the existing prescription' : 'Generate professional prescriptions for your patients'}</p>
       </div>
 
       <div className="rounded-2xl bg-gradient-to-br from-white to-slate-50 shadow-xl ring-1 ring-slate-200/50 p-6 border border-slate-100">
@@ -1230,6 +1530,40 @@ export default function DoctorPrescription(){
         )}
       </div>
 
+      <div className="rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-100 shadow-xl ring-1 ring-emerald-200/50 p-6 border border-emerald-100 mt-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <svg className="w-5 h-5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zM9 10a1 1 0 00-1 1v3a1 1 0 102 0v-3a1 1 0 00-1-1zm1-4a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd"/></svg>
+            <div className="text-emerald-800 font-bold text-lg">Vaccine Suggestions</div>
+          </div>
+        </div>
+        
+        {/* Vaccine chips */}
+        {vaccineRegimens.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-3">
+            {vaccineRegimens
+              .filter(g => !hiddenVaccineRegimens.includes(normalizeKey(g?.condition)))
+              .map(g => (
+              <button key={g._id || g.id} onClick={()=>handleConditionClick(g, true)} className={`group h-10 px-4 rounded-xl text-white border-2 cursor-pointer text-sm font-semibold transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-105 flex items-center gap-2 ${hasRegimenAlready(g, true)?'bg-gradient-to-r from-emerald-600 to-teal-600 border-emerald-300 hover:from-emerald-700 hover:to-teal-700':'bg-gradient-to-r from-emerald-500 to-teal-500 border-emerald-300 hover:from-emerald-600 hover:to-teal-600 hover:border-emerald-400'}`}>
+                {hasRegimenAlready(g, true) ? (
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 10a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1z" clipRule="evenodd"/></svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 01-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd"/></svg>
+                )}
+                {g.condition || 'Vaccine'}
+              </button>
+            ))}
+          </div>
+        )}
+        {vaccineRegimens.length === 0 && (
+          <div className="text-center py-8 text-emerald-400">
+            <svg className="w-12 h-12 mx-auto mb-2 opacity-50" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zM9 10a1 1 0 00-1 1v3a1 1 0 102 0v-3a1 1 0 00-1-1zm1-4a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd"/></svg>
+            <div className="text-sm font-medium">No vaccine regimens available</div>
+            <div className="text-xs">Add regimens in Vaccines page first</div>
+          </div>
+        )}
+      </div>
+
       <div className="prescription-form-section rounded-2xl bg-gradient-to-br from-emerald-50 to-green-100 shadow-xl ring-1 ring-emerald-200/50 p-6 border border-emerald-100">
         <div className="flex items-center gap-2 mb-4">
           <svg className="w-5 h-5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"/></svg>
@@ -1242,13 +1576,13 @@ export default function DoctorPrescription(){
               <div key={x.id} className="group relative rounded-2xl border-2 border-slate-200 hover:border-emerald-400 bg-white shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden">
                 {/* Header with medicine name and route */}
                 <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3 flex-1">
+        <div className="flex items-center gap-3 flex-1">
                     <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
                       <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z"/></svg>
                     </div>
                     <div className="flex-1">
-                      <label className="block text-xs font-medium text-emerald-50 mb-1">Medicine Name</label>
-                      <input list="mednames" className="w-full h-10 px-3 rounded-lg bg-white/95 backdrop-blur-sm border-0 text-slate-800 font-semibold text-base placeholder-slate-400 focus:ring-2 focus:ring-white/50 transition-all" placeholder="Enter medicine name" value={x.name} onChange={e=>{ updateItem(x.id,'name',e.target.value); tryAttachMedicine(x.id, e.target.value) }} />
+                      <label className="block text-xs font-medium text-emerald-50 mb-1">{x.isVaccine ? 'Vaccine Name' : 'Medicine Name'}</label>
+                      <input list={x.isVaccine ? "vacnames" : "mednames"} className="w-full h-10 px-3 rounded-lg bg-white/95 backdrop-blur-sm border-0 text-slate-800 font-semibold text-base placeholder-slate-400 focus:ring-2 focus:ring-white/50 transition-all" placeholder={x.isVaccine ? "Enter vaccine name" : "Enter medicine name"} value={x.name} onChange={e=>{ updateItem(x.id,'name',e.target.value); (x.isVaccine ? tryAttachVaccine : tryAttachMedicine)(x.id, e.target.value) }} />
                     </div>
                   </div>
                   <div className="ml-4">
@@ -1262,41 +1596,56 @@ export default function DoctorPrescription(){
 
                 {/* Body with organized sections */}
                 <div className="p-6 space-y-5">
-                  {/* Dose Type Selection */}
-                  <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
-                    <div className="flex items-center gap-2 mb-3">
-                      <svg className="w-4 h-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd"/></svg>
-                      <label className="text-xs font-bold text-amber-700 uppercase tracking-wide">Dose Type</label>
-                    </div>
-                    <div className="flex gap-4">
-                      <label className={`flex-1 cursor-pointer rounded-lg border-2 p-3 transition-all ${x.doseType === 'Weight Based' ? 'border-amber-500 bg-amber-100' : 'border-slate-200 hover:border-amber-300'}`}>
-                        <input type="radio" name={`doseType-${x.id}`} value="Weight Based" checked={x.doseType === 'Weight Based'} onChange={()=>updateItem(x.id,'doseType','Weight Based')} className="sr-only" />
-                        <div className="flex items-center gap-2">
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${x.doseType === 'Weight Based' ? 'border-amber-600' : 'border-slate-400'}`}>
-                            {x.doseType === 'Weight Based' && <div className="w-3 h-3 rounded-full bg-amber-600" />}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-800">Weight Based</div>
-                            <div className="text-xs text-slate-500">Dose depends on animal weight (mg/kg)</div>
-                          </div>
+                  {x.isVaccine ? (
+                    <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-4 border border-emerald-200">
+                      <div className="mb-4">
+                        <label className="block text-xs font-semibold text-slate-600 mb-1.5">Condition</label>
+                        <input className="w-full h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 bg-white text-slate-700 text-sm placeholder-slate-400 transition-all" value={x.condition||''} onChange={e=>updateItem(x.id,'condition',e.target.value)} />
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-bold text-emerald-700 uppercase tracking-wider">Vaccination Shots</label>
+                          <button type="button" onClick={() => addShotToItem(x.id)} className="text-xs bg-emerald-100 text-emerald-600 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-200 font-bold transition-all">+ Add Shot</button>
                         </div>
-                      </label>
-                      <label className={`flex-1 cursor-pointer rounded-lg border-2 p-3 transition-all ${x.doseType === 'Fixed Dose' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300'}`}>
-                        <input type="radio" name={`doseType-${x.id}`} value="Fixed Dose" checked={x.doseType === 'Fixed Dose'} onChange={()=>updateItem(x.id,'doseType','Fixed Dose')} className="sr-only" />
-                        <div className="flex items-center gap-2">
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${x.doseType === 'Fixed Dose' ? 'border-emerald-600' : 'border-slate-400'}`}>
-                            {x.doseType === 'Fixed Dose' && <div className="w-3 h-3 rounded-full bg-emerald-600" />}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-800">Fixed Dose</div>
-                            <div className="text-xs text-slate-500">Vaccine/standard dose (fixed amount)</div>
-                          </div>
+                        
+                        <div className="grid grid-cols-1 gap-3">
+                          {(x.shots || []).map((shot, sIdx) => (
+                            <div key={sIdx} className="bg-white rounded-xl p-4 border border-emerald-100 relative group/shot">
+                              {x.shots.length > 1 && (
+                                <button type="button" onClick={() => removeShotFromItem(x.id, sIdx)} className="absolute -top-2 -right-2 w-6 h-6 bg-red-100 text-red-600 rounded-full flex items-center justify-center opacity-0 group-hover/shot:opacity-100 transition-all border border-red-200 hover:bg-red-600 hover:text-white">×</button>
+                              )}
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                <div>
+                                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">Date Given</label>
+                                  <input type="date" value={shot.dateGiven} onChange={e=>updateItemShot(x.id, sIdx, 'dateGiven', e.target.value)} className="h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-emerald-400 w-full text-sm bg-white" />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">Shot Stage</label>
+                                  <select value={shot.shotStage} onChange={e=>updateItemShot(x.id, sIdx, 'shotStage', e.target.value)} className="h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-emerald-400 w-full bg-white text-sm">
+                                    <option value="">Select Stage</option>
+                                    <option>1st</option>
+                                    <option>2nd</option>
+                                    <option>3rd</option>
+                                    <option>4th</option>
+                                    <option>Annual booster</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">Next Due (auto)</label>
+                                  <input value={shot.nextDue} readOnly placeholder="Next Due (auto)" className="h-10 px-3 rounded-lg border-2 border-slate-200 bg-slate-50 w-full text-sm" />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">Vet Name</label>
+                                  <input value={shot.vet} onChange={e=>updateItemShot(x.id, sIdx, 'vet', e.target.value)} placeholder="Vet's Name" className="h-10 px-4 rounded-lg border-2 border-slate-200 focus:border-emerald-400 w-full text-sm bg-white" />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      </label>
+                      </div>
                     </div>
-                  </div>
-
-                  {x.doseType === 'Weight Based' ? (
+                  ) : x.doseType === 'Weight Based' ? (
                     <>
                       {/* Dosage Calculation Section - Weight Based */}
                       <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-4 border border-blue-200">
@@ -1383,6 +1732,41 @@ export default function DoctorPrescription(){
                     </>
                   )}
 
+                  {!x.isVaccine && (
+                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-200">
+                      <div className="flex items-center gap-2 mb-3">
+                        <svg className="w-4 h-4 text-amber-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd"/></svg>
+                        <label className="text-xs font-bold text-amber-700 uppercase tracking-wide">Dose Type</label>
+                      </div>
+                      <div className="flex gap-4">
+                        <label className={`flex-1 cursor-pointer rounded-lg border-2 p-3 transition-all ${x.doseType === 'Weight Based' ? 'border-amber-500 bg-amber-100' : 'border-slate-200 hover:border-amber-300'}`}>
+                          <input type="radio" name={`doseType-${x.id}`} value="Weight Based" checked={x.doseType === 'Weight Based'} onChange={()=>updateItem(x.id,'doseType','Weight Based')} className="sr-only" />
+                          <div className="flex items-center gap-2">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${x.doseType === 'Weight Based' ? 'border-amber-600' : 'border-slate-400'}`}>
+                              {x.doseType === 'Weight Based' && <div className="w-3 h-3 rounded-full bg-amber-600" />}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-slate-800">Weight Based</div>
+                              <div className="text-xs text-slate-500">Dose depends on animal weight (mg/kg)</div>
+                            </div>
+                          </div>
+                        </label>
+                        <label className={`flex-1 cursor-pointer rounded-lg border-2 p-3 transition-all ${x.doseType === 'Fixed Dose' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-emerald-300'}`}>
+                          <input type="radio" name={`doseType-${x.id}`} value="Fixed Dose" checked={x.doseType === 'Fixed Dose'} onChange={()=>updateItem(x.id,'doseType','Fixed Dose')} className="sr-only" />
+                          <div className="flex items-center gap-2">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${x.doseType === 'Fixed Dose' ? 'border-emerald-600' : 'border-slate-400'}`}>
+                              {x.doseType === 'Fixed Dose' && <div className="w-3 h-3 rounded-full bg-emerald-600" />}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-slate-800">Fixed Dose</div>
+                              <div className="text-xs text-slate-500">Vaccine/standard dose (fixed amount)</div>
+                            </div>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Instructions Section */}
                   <div>
                     <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-2 flex items-center gap-2">
@@ -1400,6 +1784,11 @@ export default function DoctorPrescription(){
               <option key={m.id} value={m.name} />
             ))}
           </datalist>
+          <datalist id="vacnames">
+            {vaccines.map(v=> (
+              <option key={v.id} value={v.name} />
+            ))}
+          </datalist>
             </div>
           {items.length===0 && (
             <div className="rounded-2xl border-2 border-dashed border-emerald-300 text-emerald-400 p-12 text-center">
@@ -1410,72 +1799,16 @@ export default function DoctorPrescription(){
           )}
         
         <div className="mt-6 flex gap-3">
-          <button onClick={save} disabled={!canSave} className={`px-6 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+          <button onClick={save} disabled={!canSave} className={`px-8 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
-            Save Prescription
+            {editingId ? 'Update Prescription' : 'Save Prescription'}
           </button>
-          <button onClick={()=>openPreview()} disabled={!canSave} className={`px-6 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/></svg>
-            Preview / Print
-          </button>
-          <button 
-            onClick={async ()=>{
-              if (!canSave) return
-              // Save prescription first
-              await save()
-              // Create pharmacy referral
-              const referral = {
-                id: 'REF-'+Date.now(),
-                prescriptionId: 'PRX-'+Date.now(),
-                patientId: patient?.id || patientId,
-                petName: patient?.petName || patient?.name || '',
-                ownerName: patient?.ownerName || patient?.owner || '',
-                clientId: patient?.clientId || patient?.details?.owner?.clientId || '',
-                contact: patient?.contact || patient?.details?.owner?.contact || '',
-                medicines: items.map(item => ({
-                  name: item.name,
-                  dosage: item.dosage || '',
-                  route: item.route || '',
-                  frequency: item.frequency || '',
-                  duration: item.duration || '',
-                  instructions: item.instructions || '',
-                  quantity: 1
-                })),
-                doctor: JSON.parse(localStorage.getItem('doctor_auth')||'{}'),
-                createdAt: new Date().toISOString(),
-                status: 'Pending'
-              }
-              // Save to localStorage for pharmacy to access
-              const referrals = JSON.parse(localStorage.getItem('pharmacy_referrals')||'[]')
-              localStorage.setItem('pharmacy_referrals', JSON.stringify([referral, ...referrals]))
-              
-              // Show success modal
-              setReferralData(referral)
-              setShowReferralSuccess(true)
-            }} 
-            disabled={!canSave} 
-            className={`px-6 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}
-          >
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
-            Refer to Pharmacy
+          <button onClick={resetAll} className="px-6 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 bg-gradient-to-r from-slate-500 to-slate-600 hover:from-slate-600 hover:to-slate-700 text-white">
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd"/></svg>
+            Reset Form
           </button>
         </div>
       </div>
-
-      {(showPreview && preview) ? (
-        <PrintPrescription
-          doc={preview}
-          settings={settings}
-          signature={signature}
-          fallbackNotes={notes}
-          fallbackPatient={previewPatient || patient}
-          onClose={()=> {
-            setShowPreview(false)
-            if (resetOnClose) resetAll()
-          }}
-          onAfterPrint={()=>{ setShowPreview(false); resetAll(); }}
-        />
-      ) : null}
 
       {dupMedModal.open && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center">

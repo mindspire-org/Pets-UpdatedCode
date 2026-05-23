@@ -6,6 +6,8 @@ import PharmacyPurchase from "../models/PharmacyPurchase.js";
 import Inventory from "../models/Inventory.js";
 import Payable from "../models/Payable.js";
 import VendorPayment from "../models/VendorPayment.js";
+import PetshopPharmacyInvoice from "../models/PetshopPharmacyInvoice.js";
+import PetshopPharmacyMedicine from "../models/PetshopPharmacyMedicine.js";
 
 const router = express.Router();
 
@@ -612,35 +614,64 @@ router.get("/:id/pharmacy-invoices", async (req, res) => {
     const supplier = await Supplier.findById(req.params.id).lean();
     if (!supplier) return res.status(404).json({ success: false, message: "Supplier not found" });
 
-    // Group by invoiceNo, summing netTotal and amountPaid across all rows for that invoice
-    const purchases = await PharmacyPurchase.find({
-      supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
-    }).sort({ purchaseDate: -1 }).lean();
+    let invoices;
+    if (supplier.portal === "shop") {
+      // Use Petshop's own PetshopPharmacyInvoice collection
+      const petshopInvoices = await PetshopPharmacyInvoice.find({
+        supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") },
+        portal: "shop"
+      }).sort({ invoiceDate: -1 }).lean();
 
-    // Aggregate by invoiceNo
-    const invoiceMap = {};
-    for (const p of purchases) {
-      const key = p.invoiceNo;
-      if (!invoiceMap[key]) {
-        invoiceMap[key] = {
-          invoiceNo: p.invoiceNo,
-          purchaseDate: p.purchaseDate,
-          supplierName: p.supplierName,
-          netTotal: 0,
-          amountPaid: 0,
-          paymentStatus: p.paymentStatus || "Pending",
-          purchaseIds: [],
-        };
+      const invoiceMap = {};
+      for (const inv of petshopInvoices) {
+        const key = inv.invoiceNo;
+        if (!invoiceMap[key]) {
+          invoiceMap[key] = {
+            invoiceNo: inv.invoiceNo,
+            purchaseDate: inv.invoiceDate,
+            supplierName: inv.supplierName,
+            netTotal: Number(inv.netTotal || 0),
+            amountPaid: 0,
+            paymentStatus: "Pending",
+            purchaseIds: [String(inv._id)],
+          };
+        }
       }
-      invoiceMap[key].netTotal    += Number(p.netTotal    || p.totalAmount || 0);
-      invoiceMap[key].amountPaid  += Number(p.amountPaid  || 0);
-      invoiceMap[key].purchaseIds.push(String(p._id));
-    }
 
-    const invoices = Object.values(invoiceMap).map(inv => ({
-      ...inv,
-      remaining: Math.max(0, inv.netTotal - inv.amountPaid),
-    }));
+      invoices = Object.values(invoiceMap).map(inv => ({
+        ...inv,
+        remaining: Math.max(0, inv.netTotal - inv.amountPaid),
+      }));
+    } else {
+      // Use PharmacyPurchase for other portals (pharmacy)
+      const purchases = await PharmacyPurchase.find({
+        supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
+      }).sort({ purchaseDate: -1 }).lean();
+
+      const invoiceMap = {};
+      for (const p of purchases) {
+        const key = p.invoiceNo;
+        if (!invoiceMap[key]) {
+          invoiceMap[key] = {
+            invoiceNo: p.invoiceNo,
+            purchaseDate: p.purchaseDate,
+            supplierName: p.supplierName,
+            netTotal: 0,
+            amountPaid: 0,
+            paymentStatus: p.paymentStatus || "Pending",
+            purchaseIds: [],
+          };
+        }
+        invoiceMap[key].netTotal += Number(p.netTotal || p.totalAmount || 0);
+        invoiceMap[key].amountPaid += Number(p.amountPaid || 0);
+        invoiceMap[key].purchaseIds.push(String(p._id));
+      }
+
+      invoices = Object.values(invoiceMap).map(inv => ({
+        ...inv,
+        remaining: Math.max(0, inv.netTotal - inv.amountPaid),
+      }));
+    }
 
     res.json({ success: true, data: invoices });
   } catch (err) {
@@ -648,39 +679,67 @@ router.get("/:id/pharmacy-invoices", async (req, res) => {
   }
 });
 
-// Get all individual supplied items for a supplier from PharmacyPurchase — for Supplied Items tab
+// Get all individual supplied items for a supplier — for Supplied Items tab
 router.get("/:id/pharmacy-items", async (req, res) => {
   try {
     const supplier = await Supplier.findById(req.params.id).lean();
     if (!supplier) return res.status(404).json({ success: false, message: "Supplier not found" });
 
-    const purchases = await PharmacyPurchase.find({
-      supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
-    }).sort({ purchaseDate: -1 }).lean();
+    let items;
+    if (supplier.portal === "shop") {
+      // Use Petshop's own PetshopPharmacyMedicine collection
+      const petshopMedicines = await PetshopPharmacyMedicine.find({
+        supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
+      }).sort({ purchaseDate: -1 }).lean();
 
-    // Flatten all items with invoice context
-    const items = [];
-    for (const p of purchases) {
-      for (const item of (p.items || [])) {
-        items.push({
-          invoiceNo:    p.invoiceNo,
-          purchaseDate: p.purchaseDate,
-          medicineName: item.medicineName,
-          genericName:  item.genericName  || "",
-          batchNo:      item.batchNo      || "",
-          category:     item.subCategory  || item.category || "",
-          qtyPacks:     item.qtyPacks     || 0,
-          unitsPerPack: item.unitsPerPack || 1,
-          totalItems:   item.totalItems   || item.quantity || 0,
-          unit:         item.unit         || "pcs",
-          buyPerPack:   item.buyPerPack   || item.purchasePrice || 0,
-          buyPerUnit:   item.buyPerUnit   || item.purchasePrice || 0,
-          salePerPack:  item.salePerPack  || item.salePrice || 0,
-          salePerUnit:  item.salePerUnit  || item.salePrice || 0,
-          lineTotal:    item.lineTotal    || item.totalCost || 0,
-          expiryDate:   item.expiryDate,
-        });
+      items = petshopMedicines.map(med => ({
+        invoiceNo: med.invoiceNo,
+        purchaseDate: med.purchaseDate,
+        medicineName: med.medicineName,
+        genericName: med.genericName || "",
+        batchNo: med.batchNo || "",
+        category: med.subCategory || med.category || "",
+        qtyPacks: med.qtyPacks || 0,
+        unitsPerPack: med.unitsPerPack || 1,
+        totalItems: med.totalItems || med.quantity || 0,
+        unit: med.unit || "pcs",
+        buyPerPack: med.buyPerPack || med.purchasePrice || 0,
+        buyPerUnit: med.purchasePrice || 0,
+        salePerPack: med.salePerPack || med.salePrice || 0,
+        salePerUnit: med.salePrice || 0,
+        lineTotal: (med.buyPerPack || med.purchasePrice || 0) * (med.qtyPacks || 1),
+        expiryDate: med.expiryDate,
+      }));
+    } else {
+      // Use PharmacyPurchase for other portals (pharmacy)
+      const purchases = await PharmacyPurchase.find({
+        supplierName: { $regex: new RegExp(`^${supplier.supplierName}$`, "i") }
+      }).sort({ purchaseDate: -1 }).lean();
+
+      const itemsArray = [];
+      for (const p of purchases) {
+        for (const item of (p.items || [])) {
+          itemsArray.push({
+            invoiceNo: p.invoiceNo,
+            purchaseDate: p.purchaseDate,
+            medicineName: item.medicineName,
+            genericName: item.genericName || "",
+            batchNo: item.batchNo || "",
+            category: item.subCategory || item.category || "",
+            qtyPacks: item.qtyPacks || 0,
+            unitsPerPack: item.unitsPerPack || 1,
+            totalItems: item.totalItems || item.quantity || 0,
+            unit: item.unit || "pcs",
+            buyPerPack: item.buyPerPack || item.purchasePrice || 0,
+            buyPerUnit: item.buyPerUnit || item.purchasePrice || 0,
+            salePerPack: item.salePerPack || item.salePrice || 0,
+            salePerUnit: item.salePerUnit || item.salePrice || 0,
+            lineTotal: item.lineTotal || item.totalCost || 0,
+            expiryDate: item.expiryDate,
+          });
+        }
       }
+      items = itemsArray;
     }
 
     res.json({ success: true, data: items });

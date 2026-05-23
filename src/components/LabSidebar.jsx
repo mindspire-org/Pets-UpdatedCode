@@ -5,6 +5,7 @@ import { FiGrid, FiFilePlus, FiList, FiActivity, FiPackage, FiSettings, FiLogOut
 export default function LabSidebar({ collapsed=false, open=false, onClose=()=>{} }){
   const navigate = useNavigate()
   const auth = JSON.parse(localStorage.getItem('lab_auth') || '{}')
+  const role = auth.role?.toLowerCase()
 
   const linkClass = ({ isActive }) => `flex items-center gap-3 px-3 h-10 rounded-xl transition text-sm font-medium whitespace-nowrap ${isActive ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'}`
   const iconSize = collapsed ? 19 : 18
@@ -29,14 +30,14 @@ export default function LabSidebar({ collapsed=false, open=false, onClose=()=>{}
     ]
 
     // If user is admin, show all
-    if (auth.role === 'admin' || auth.role === 'Admin') return allItems;
+    if (role === 'admin') return allItems;
 
     // Filter based on permissions
     const permissions = auth.sidebarPermissions?.lab;
-    if (!permissions) return allItems; // Default to show all if no permissions set
+    if (!Array.isArray(permissions)) return [];
 
     return allItems.filter(item => permissions.includes(item.id));
-  }, [auth.role, auth.sidebarPermissions]);
+  }, [role, auth.sidebarPermissions]);
 
   const Nav = (
     <nav className="space-y-1">

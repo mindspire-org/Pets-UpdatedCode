@@ -9,6 +9,17 @@ export default function ShopLogin() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { addActivity } = useActivity()
+
+  const normalizeSidebarPermissions = (sp) => {
+    if (!sp) return {}
+    if (typeof sp?.entries === 'function') {
+      try {
+        return Object.fromEntries(sp.entries())
+      } catch {}
+    }
+    if (typeof sp === 'object' && !Array.isArray(sp)) return sp
+    return {}
+  }
   
   const handleSubmit = async ({ username, password }) => {
     try {
@@ -19,19 +30,28 @@ export default function ShopLogin() {
       
       if (response && response.data) {
         const user = response.data
+        const userRole = user.role?.toLowerCase()
         
-        if (user.role === 'shop' || user.role === 'Shop') {
+        if (userRole === 'shop' || userRole === 'admin') {
+          // Check if user has shop portal access
+          const hasPortalAccess = user.portalAccess?.map(p => p.toLowerCase()).includes('shop')
+          if (userRole !== 'admin' && !hasPortalAccess) {
+            setError('Access denied. You do not have permission to access the Shop Portal. Contact your administrator.')
+            return
+          }
+          
           localStorage.setItem('portal', 'shop')
           localStorage.setItem('shop_auth', JSON.stringify({ 
             username: user.username,
             name: user.name,
-            role: user.role,
-            sidebarPermissions: user.sidebarPermissions || {}
+            role: user.role, // Keep original casing for display
+            sidebarPermissions: normalizeSidebarPermissions(user.sidebarPermissions),
+            portalAccess: user.portalAccess || []
           }))
           try { addActivity({ user: 'Shop', text: `Login successful: ${user.username}` }) } catch {}
           navigate('/shop')
         } else {
-          setError('Access denied. Shop role required.')
+          setError('Access denied. Shop or Admin role required.')
         }
       } else {
         setError('Invalid username or password')

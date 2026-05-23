@@ -9,7 +9,9 @@ import LabReport from '../models/LabReport.js';
 import ProcedureRecord from '../models/ProcedureRecord.js';
 import Financial from '../models/Financial.js';
 import Expense from '../models/Expense.js';
+import StaffAdvance from '../models/StaffAdvance.js';
 import { ensureDefaultAccounts, getChartOfAccounts, getSanityChecks, getAccountBalanceAsOf, getTrialBalance, getIncomeStatement, getGeneralLedger, getJournalEntryDetail, getPartyLedger, getBalanceSheet, getCashFlow, postShopSale, postPharmacySale, postPharmacyPurchase, postLabReport, postReceptionProcedure, postFinancialRecord, postInventoryPurchase } from '../utils/accountingService.js';
+import { postEntry } from '../utils/accountingService.js';
 
 const router = express.Router();
 
@@ -376,6 +378,25 @@ router.post('/sync', async (req, res, next) => {
     const invItems = await Inventory.find(invFilter).lean();
     for (const it of invItems) {
       await ensureEntry('inventory_purchase', String(it.id || it._id), postInventoryPurchase, it);
+    }
+
+    // Staff Advances
+    const staffAdvances = await StaffAdvance.find(inRange('date')).lean();
+    for (const sa of staffAdvances) {
+      await ensureEntry('staff_advance', String(sa._id), async (adv) => {
+        await postEntry({
+          date: adv.date || new Date(),
+          portal: adv.portal || 'admin',
+          sourceType: 'staff_advance',
+          sourceId: String(adv._id),
+          description: adv.notes || `Advance to ${adv.staffName || adv.staffId || ''}`,
+          lines: [
+            { accountCode: '1110', debit: adv.amount, credit: 0 },
+            { accountCode: '1001', debit: 0, credit: adv.amount },
+          ],
+          meta: { extra: { staffId: adv.staffId, staffName: adv.staffName } },
+        });
+      }, sa);
     }
 
     res.json({ success: true, data: summary });

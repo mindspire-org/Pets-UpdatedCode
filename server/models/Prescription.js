@@ -1,5 +1,12 @@
 import mongoose from 'mongoose';
 
+const vaccineShotSchema = new mongoose.Schema({
+  dateGiven: String,
+  nextDue: String,
+  vet: String,
+  shotStage: String
+}, { _id: false });
+
 const prescriptionItemSchema = new mongoose.Schema({
   id: mongoose.Schema.Types.Mixed,
   name: String,
@@ -12,7 +19,11 @@ const prescriptionItemSchema = new mongoose.Schema({
   dose: String,
   unit: String,
   condition: String,
-  instructions: String
+  instructions: String,
+  doseType: String,
+  useDehydration: Boolean,
+  isVaccine: Boolean,
+  shots: [vaccineShotSchema]
 }, { _id: false });
 
 const prescriptionSchema = new mongoose.Schema({
@@ -37,6 +48,7 @@ const prescriptionSchema = new mongoose.Schema({
     appointment: String,
     weightKg: String,
     tempF: String,
+    tempUnit: String,
     dehydration: String
   },
   items: [prescriptionItemSchema],
@@ -46,7 +58,15 @@ const prescriptionSchema = new mongoose.Schema({
   notes: {
     hx: [String],
     oe: [String],
-    dx: [String]
+    dx: [String],
+    advice: [String],
+    tests: [String],
+    vitals: {
+      weightKg: String,
+      tempF: String,
+      tempUnit: String,
+      dehydration: String
+    }
   },
   doctor: {
     name: String,

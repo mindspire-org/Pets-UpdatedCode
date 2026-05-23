@@ -1,8 +1,14 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { FiSearch, FiPlus, FiMinus, FiTrash2, FiPrinter, FiShoppingCart, FiX, FiGrid, FiList, FiEyeOff, FiMaximize2 } from 'react-icons/fi';
-import { pharmacyMedicinesAPI, pharmacySalesAPI, settingsAPI, pharmacyDuesAPI, petsAPI, prescriptionsAPI, pharmacyCreditCustomersAPI, holdBillsAPI } from '../../services/api';
+import { pharmacyMedicinesAPI, pharmacySalesAPI, settingsAPI, pharmacyDuesAPI, petsAPI, prescriptionsAPI, pharmacyCreditCustomersAPI, holdBillsAPI, pharmacySettingsAPI } from '../../services/api';
 
-export default function PharmacyPOS() {
+export default function PharmacyPOS({ apis } = {}) {
+  const medicinesAPI = apis?.medicines || pharmacyMedicinesAPI;
+  const salesAPI = apis?.sales || pharmacySalesAPI;
+  const duesAPI = apis?.dues || pharmacyDuesAPI;
+  const creditCustomersAPI = apis?.creditCustomers || pharmacyCreditCustomersAPI;
+  const sharedSettingsAPI = apis?.pharmacySettings || pharmacySettingsAPI;
+  const heldBillsAPI = apis?.holdBills || holdBillsAPI;
   const [medicines, setMedicines] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState([]);
@@ -43,10 +49,14 @@ export default function PharmacyPOS() {
   const [resumedBillId, setResumedBillId] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [toast, setToast] = useState('');
+  const [activeReferralId, setActiveReferralId] = useState('');
+  const [activeReferralItems, setActiveReferralItems] = useState(null);
+  const referralCartPrefilledRef = useRef(false);
   const [showHeldBillsModal, setShowHeldBillsModal] = useState(false);
   const [heldBills, setHeldBills] = useState([]);
   const [isLoadingHeldBills, setIsLoadingHeldBills] = useState(false);
   const [hospitalSettings, setHospitalSettings] = useState(null);
+  const [pharmacySettings, setPharmacySettings] = useState(null);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(-1);
   const receiptRef = useRef();
   const searchInputRef = useRef();
@@ -57,8 +67,77 @@ export default function PharmacyPOS() {
   useEffect(() => {
     fetchMedicines();
     fetchHospitalSettings();
+    fetchPharmacySettings();
     loadPrescriptionData();
   }, []);
+
+  // Prefill cart from referral once medicines are loaded.
+  useEffect(() => {
+    if (referralCartPrefilledRef.current) return;
+    if (!activeReferralId) return;
+    if (!Array.isArray(activeReferralItems) || activeReferralItems.length === 0) return;
+    if (!Array.isArray(medicines) || medicines.length === 0) return;
+
+    const normalize = (v) => String(v || '').toLowerCase().trim();
+    const desired = activeReferralItems
+      .filter(x => !x?.isVaccine && !x?.nonInventory)
+      .map(x => ({ ...x, nameKey: normalize(x?.name) }))
+      .filter(x => x.nameKey);
+
+    if (desired.length === 0) {
+      referralCartPrefilledRef.current = true;
+      return;
+    }
+
+    // Build a cart from referral items by matching names to inventory.
+    const toCartItem = (medicine) => {
+      const defaultDiscount = medicine.defaultDiscount || 0;
+      const loosePrice = medicine.salePrice || 0;
+      const packPrice = medicine.salePerPack || 0;
+      return {
+        medicineId: medicine._id,
+        medicineName: medicine.medicineName,
+        barcode: medicine.barcode,
+        batchNo: medicine.batchNo || 'N/A',
+        quantity: 1,
+        pricePerUnit: loosePrice,
+        minSalePrice: medicine.minSalePrice || 0,
+        totalPrice: loosePrice * (1 - defaultDiscount / 100),
+        availableStock: medicine.quantity,
+        unitsPerPack: medicine.unitsPerPack || 1,
+        salePerPack: packPrice,
+        loosePrice,
+        packPrice,
+        sellBy: 'Loose',
+        discount: defaultDiscount,
+        dbDefaultDiscount: defaultDiscount,
+        category: medicine.category || 'Medicine',
+        unit: medicine.unit || 'Unit'
+      };
+    };
+
+    const nextCart = [];
+    const notFound = [];
+    for (const it of desired) {
+      const med = medicines.find(m => normalize(m?.medicineName) === it.nameKey)
+        || medicines.find(m => normalize(m?.medicineName).includes(it.nameKey) || it.nameKey.includes(normalize(m?.medicineName)));
+      if (med) nextCart.push(toCartItem(med));
+      else notFound.push(it.name);
+    }
+
+    if (nextCart.length > 0) {
+      setCart(nextCart);
+      showToast('Referral items loaded into cart');
+    }
+    if (notFound.length > 0) {
+      console.warn('POS: Referral items not found in inventory:', notFound);
+      showToast(`Some items not found: ${notFound.slice(0, 2).join(', ')}${notFound.length > 2 ? '...' : ''}`);
+    }
+
+    referralCartPrefilledRef.current = true;
+    // Clear the transient POS payload so refresh doesn't re-apply repeatedly.
+    try { localStorage.removeItem('pharmacy_pos_data'); } catch {}
+  }, [medicines, activeReferralId, activeReferralItems]);
 
   // Reset selected index when search query changes
   useEffect(() => {
@@ -92,7 +171,7 @@ export default function PharmacyPOS() {
         setSelectedCreditCustomer(null);
         setCreditSuggestions([]);
         setShowCreditSuggestions(false);
-        pharmacyCreditCustomersAPI.getAll()
+        creditCustomersAPI.getAll()
           .then(res => setAllCreditCustomers(res.data || []))
           .catch(() => setAllCreditCustomers([]));
       } else if (e.key === 'F10') {
@@ -118,7 +197,7 @@ export default function PharmacyPOS() {
 
   const fetchMedicines = async () => {
     try {
-      const response = await pharmacyMedicinesAPI.getAll();
+      const response = await medicinesAPI.getAll();
       setMedicines(response.data || []);
     } catch (error) {
       console.error('Error fetching medicines:', error);
@@ -135,12 +214,38 @@ export default function PharmacyPOS() {
     }
   };
 
+  const fetchPharmacySettings = async () => {
+    try {
+      const response = await sharedSettingsAPI.get();
+      const settings = response?.data || response || {};
+      
+      console.log('POS: Settings received from DB:', settings);
+      
+      // Update the settings object
+      setPharmacySettings(settings);
+      
+      // IMPORTANT: Extract and cast to numbers immediately
+      const defaultDisc = Number(settings.billDiscountPercent) || 0;
+      const defaultTax = Number(settings.salesTaxPercent) || 0;
+
+      // Update the specific state variables that drive the UI inputs
+      setBillDiscountPercent(defaultDisc);
+      setSalesTaxPercent(defaultTax);
+      
+      console.log('POS: Defaults applied to state:', { defaultDisc, defaultTax });
+    } catch (error) {
+      console.error('POS: Error fetching pharmacy settings:', error);
+    }
+  };
+
   const loadPrescriptionData = () => {
     const posData = localStorage.getItem('pharmacy_pos_data');
     if (posData) {
       try {
         const data = JSON.parse(posData);
         if (Date.now() - data.timestamp < 300000) {
+          setActiveReferralId(data.referralId || '');
+          setActiveReferralItems(Array.isArray(data.referralItems) ? data.referralItems : null);
           setCustomerInfo(prev => ({
             ...prev,
             customerName: data.customerName || '',
@@ -235,7 +340,7 @@ export default function PharmacyPOS() {
         packPrice,
         sellBy: 'Loose',
         discount: defaultDiscount,
-        defaultDiscount,
+        dbDefaultDiscount: defaultDiscount,
         category: medicine.category || 'Medicine',
         unit: medicine.unit || 'Unit'
       }]);
@@ -315,6 +420,20 @@ export default function PharmacyPOS() {
     const discount = Math.max(0, Math.min(100, Number(disc) || 0));
     const price = Number(item.pricePerUnit) || 0;
     const minPrice = item.minSalePrice || 0;
+    const dbDefaultDiscount = item.dbDefaultDiscount || 0;
+
+    // First check if user is trying to exceed the database default discount
+    if (discount > dbDefaultDiscount) {
+      showToast(`Cannot exceed default discount of ${dbDefaultDiscount}%`);
+      
+      // Update with the max allowed (dbDefaultDiscount)
+      setCart(cart.map(i =>
+        i.medicineId === medicineId
+          ? { ...i, discount: dbDefaultDiscount, totalPrice: (i.quantity * i.pricePerUnit) * (1 - dbDefaultDiscount / 100) }
+          : i
+      ));
+      return;
+    }
 
     // Calculate final price after discount
     const discountedPrice = price * (1 - discount / 100);
@@ -389,6 +508,7 @@ export default function PharmacyPOS() {
       customerContact: '',
       address: '',
       cnic: '',
+      clientId: ''
     }));
   };
 
@@ -412,8 +532,10 @@ export default function PharmacyPOS() {
     });
     setPreviousDue(0);
     setReceivedAmount('');
-    setBillDiscountPercent(0);
+    // Reset to pharmacy settings defaults instead of 0
+    setBillDiscountPercent(Number(pharmacySettings?.billDiscountPercent) || 0);
     setBillDiscountAmount(0);
+    setSalesTaxPercent(Number(pharmacySettings?.salesTaxPercent) || 0);
     setPaymentTab('Cash');
     setSelectedCreditCustomer(null);
     setCreditSuggestions([]);
@@ -434,7 +556,7 @@ export default function PharmacyPOS() {
         previousDue,
         heldBy: JSON.parse(localStorage.getItem('user') || '{}').username || 'admin'
       };
-      await holdBillsAPI.create(holdData);
+      await heldBillsAPI.create(holdData);
       showToast('Bill held successfully!');
       clearCart();
     } catch (error) {
@@ -446,7 +568,7 @@ export default function PharmacyPOS() {
   const fetchHeldBills = async () => {
     setIsLoadingHeldBills(true);
     try {
-      const response = await holdBillsAPI.getAll();
+      const response = await heldBillsAPI.getAll();
       setHeldBills(response.data || []);
     } catch (error) {
       console.error('Error fetching held bills:', error);
@@ -474,7 +596,7 @@ export default function PharmacyPOS() {
   const deleteHeldBill = async (id) => {
     if (!window.confirm('Are you sure you want to delete this held bill?')) return;
     try {
-      await holdBillsAPI.delete(id);
+      await heldBillsAPI.delete(id);
       setHeldBills(prev => prev.filter(b => b._id !== id));
       showToast('Held bill deleted!');
     } catch (error) {
@@ -487,7 +609,7 @@ export default function PharmacyPOS() {
     if (!newCustomerData.name.trim()) return showToast("Name is required");
     try {
       setNewCustomerLoading(true);
-      const res = await pharmacyCreditCustomersAPI.create(newCustomerData);
+      const res = await creditCustomersAPI.create(newCustomerData);
       showToast("Customer added successfully");
       setShowAddCustomerModal(false);
       setNewCustomerData({ name: "", phone: "", cnic: "", address: "" });
@@ -498,7 +620,7 @@ export default function PharmacyPOS() {
       }
       
       // Refresh customer list for search
-      const customersRes = await pharmacyCreditCustomersAPI.getAll();
+      const customersRes = await creditCustomersAPI.getAll();
       setAllCreditCustomers(customersRes.data || []);
     } catch (error) {
       showToast("Error adding customer");
@@ -563,6 +685,8 @@ export default function PharmacyPOS() {
           category: item.category || 'Medicine',
           batchNo: item.batchNo || 'N/A'
         })),
+        customerId: customerInfo.clientId || 'WALK-IN',
+        clientId: customerInfo.clientId || '',
         customerName: customerInfo.customerName || 'Walk-in Customer',
         customerContact: customerInfo.customerContact || '',
         customerAddress: customerInfo.address || '',
@@ -582,13 +706,28 @@ export default function PharmacyPOS() {
         balanceDue: Math.max(0, payableTotal - (Number(receivedAmount) || payableTotal))
       };
 
-      const response = await pharmacySalesAPI.create(saleData);
+      const response = await salesAPI.create(saleData);
       setLastSale(response.data);
+
+      // If checkout came from a referral, mark it as completed only after sale is created successfully.
+      if (activeReferralId) {
+        try {
+          const allReferrals = JSON.parse(localStorage.getItem('pharmacy_referrals') || '[]');
+          const updated = (Array.isArray(allReferrals) ? allReferrals : []).map(r =>
+            r.id === activeReferralId ? { ...r, status: 'Completed', completedAt: new Date().toISOString() } : r
+          );
+          localStorage.setItem('pharmacy_referrals', JSON.stringify(updated));
+          setActiveReferralId('');
+          setActiveReferralItems(null);
+        } catch (e) {
+          console.error('Error marking referral as Completed after checkout:', e);
+        }
+      }
 
       // If this was a resumed bill, delete it from held bills now that sale is complete
       if (resumedBillId) {
         try {
-          await holdBillsAPI.delete(resumedBillId);
+          await heldBillsAPI.delete(resumedBillId);
           setResumedBillId(null);
         } catch (err) {
           console.error('Error deleting held bill after checkout:', err);
@@ -600,7 +739,7 @@ export default function PharmacyPOS() {
         const amtReceived = Number(receivedAmount) || 0;
         const newDue = Math.max(0, (selectedCreditCustomer.totalDue || 0) + payableTotal - amtReceived);
         const newPaid = (selectedCreditCustomer.totalPaid || 0) + amtReceived;
-        await pharmacyCreditCustomersAPI.update(selectedCreditCustomer._id, {
+        await creditCustomersAPI.update(selectedCreditCustomer._id, {
           name: selectedCreditCustomer.name,
           phone: selectedCreditCustomer.phone,
           cnic: selectedCreditCustomer.cnic,
@@ -854,57 +993,43 @@ export default function PharmacyPOS() {
           {/* Middle: Cart Table */}
           <div className="flex-1 bg-white/80 backdrop-blur rounded-2xl shadow-xl border border-white/50 flex flex-col overflow-hidden">
             <div className="overflow-x-auto flex-1">
-              <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 text-white z-10 text-xs uppercase tracking-wider">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-purple-600 text-white z-20 shadow-sm">
                   <tr>
-                    <th className="py-4 px-4 w-12 text-center">#</th>
-                    <th className="py-4 px-4">Barcode</th>
-                    <th className="py-4 px-4">Medicine</th>
-                    <th className="py-4 px-4 w-24 text-center">Batch</th>
-                    <th className="py-4 px-4 w-28 text-center">Avail. Units</th>
-                    <th className="py-4 px-4 w-32 text-right">Pack Price</th>
-                    <th className="py-4 px-4 w-32 text-right">Unit Price</th>
-                    <th className="py-4 px-4 w-24 text-center">Line Disc%</th>
-                    <th className="py-4 px-4 w-28 text-center">Sell By</th>
-                    <th className="py-4 px-4 w-36 text-center">Quantity</th>
-                    <th className="py-4 px-4 w-32 text-right">Amount</th>
-                    <th className="py-4 px-4 w-12"></th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-10 text-center">#</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-28">Barcode</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold">Medicine</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-20 text-center">Batch</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-24 text-center">Avail. Units</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-24 text-right">Pack Price</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-24 text-right">Unit Price</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-20 text-center">Line Disc%</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-28 text-center">Sell By</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-32 text-center">Quantity</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-28 text-right">Amount</th>
+                    <th className="py-2 px-3 text-[10px] uppercase tracking-wider font-bold w-10"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-purple-100">
                   {cart.length === 0 ? (
                     <tr>
-                      <td colSpan="12" className="py-24 text-center">
-                        <div className="flex flex-col items-center justify-center">
-                          <div className="w-24 h-24 bg-gradient-to-br from-purple-100 to-blue-100 rounded-full flex items-center justify-center mb-4">
-                            <FiShoppingCart className="w-12 h-12 text-purple-400" />
-                          </div>
-                          <p className="text-xl font-bold text-slate-700 mb-2">Cart is empty</p>
-                          <p className="text-sm text-slate-500">Scan barcode or search to add items</p>
-                        </div>
+                      <td colSpan="12" className="py-20 text-center text-slate-400">
+                        <FiShoppingCart className="w-16 h-16 mx-auto mb-4 opacity-10" />
+                        <p className="text-lg font-medium">Cart is empty</p>
+                        <p className="text-sm">Scan barcode or search to add items</p>
                       </td>
                     </tr>
                   ) : (
                     cart.map((item, idx) => (
-                      <tr key={item.medicineId} className="hover:bg-gradient-to-r hover:from-purple-50 hover:to-blue-50 transition-all group">
-                        <td className="py-4 px-4 text-center text-slate-400 font-mono text-sm font-bold">{idx + 1}</td>
-                        <td className="py-4 px-4 text-purple-600 font-mono text-xs font-semibold">{item.barcode || '-'}</td>
-                        <td className="py-4 px-4 font-semibold text-slate-800">{item.medicineName}</td>
-                        <td className="py-4 px-4 text-center text-slate-600 font-mono text-xs">
-                          {item.batchNo || '-'}
-                        </td>
-                        <td className="py-4 px-4 text-center">
-                          <span className={`font-semibold text-sm ${item.availableStock <= 0 ? 'text-red-500' : item.availableStock <= 5 ? 'text-amber-500' : 'text-green-600'}`}>
-                            {item.availableStock ?? '-'}
-                          </span>
-                        </td>
-                        <td className="py-4 px-4 text-right text-slate-600 font-mono text-sm">
-                          {item.salePerPack > 0 ? Number(item.salePerPack).toLocaleString() : '-'}
-                        </td>
-                        <td className="py-4 px-4 text-right text-slate-600 font-mono text-sm font-semibold">
-                          {Number(item.pricePerUnit).toLocaleString()}
-                        </td>
-                        <td className="py-4 px-4 text-center">
+                      <tr key={item.medicineId} className="hover:bg-purple-50/50 transition-colors group text-xs">
+                        <td className="py-2 px-3 text-center text-slate-400 font-mono text-[10px]">{idx + 1}</td>
+                        <td className="py-2 px-3 text-slate-500 font-mono text-[10px]">{item.barcode || '-'}</td>
+                        <td className="py-2 px-3 font-semibold text-slate-800 break-words max-w-[150px]">{item.medicineName}</td>
+                        <td className="py-2 px-3 text-center text-slate-500 font-medium">{item.batchNo}</td>
+                        <td className="py-2 px-3 text-center font-bold text-green-600">{item.availableStock}</td>
+                        <td className="py-2 px-3 text-right text-slate-600">{Number(item.packPrice || 0).toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right text-slate-600 font-medium">{Number(item.pricePerUnit || 0).toLocaleString()}</td>
+                        <td className="py-2 px-3 text-center">
                           <input
                             ref={(el) => discountInputRefs.current[item.medicineId] = el}
                             type="number"
@@ -913,23 +1038,23 @@ export default function PharmacyPOS() {
                             value={item.discount ?? item.defaultDiscount ?? 0}
                             onChange={(e) => updateDiscount(item.medicineId, e.target.value)}
                             onKeyDown={(e) => handleDiscountKeyDown(e, item.medicineId)}
-                            className="w-16 text-center bg-white border-2 border-purple-300 rounded-lg px-2 py-2 text-sm focus:ring-2 focus:ring-purple-500 font-bold text-purple-700"
+                            className="w-14 text-center bg-white border border-purple-200 rounded px-1 py-1 text-xs focus:ring-1 focus:ring-purple-500 font-bold text-purple-700"
                           />
                         </td>
-                        <td className="py-4 px-4 text-center">
+                        <td className="py-2 px-3 text-center">
                           <select
                             value={item.sellBy || 'Loose'}
                             onChange={(e) => updateSellBy(item.medicineId, e.target.value)}
-                            className="bg-white border-2 border-purple-300 rounded-lg px-2 py-2 text-sm font-semibold text-purple-700 focus:ring-2 focus:ring-purple-500 outline-none cursor-pointer"
+                            className="bg-white border border-purple-200 rounded px-1 py-1 text-[10px] font-semibold text-purple-700 focus:ring-1 focus:ring-purple-500 outline-none cursor-pointer"
                           >
                             <option value="Loose">Loose</option>
                             <option value="Pack">Pack</option>
                           </select>
                         </td>
-                        <td className="py-4 px-4">
-                          <div className="flex items-center justify-center gap-2">
-                            <button onClick={() => updateQuantity(item.medicineId, item.quantity - 1)} className="p-2 text-slate-400 hover:text-purple-600 hover:bg-purple-100 rounded-lg transition-all">
-                              <FiMinus className="w-4 h-4" />
+                        <td className="py-2 px-3">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => updateQuantity(item.medicineId, item.quantity - 1)} className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-100 rounded transition-all">
+                              <FiMinus className="w-3 h-3" />
                             </button>
                             <input
                               ref={(el) => qtyInputRefs.current[item.medicineId] = el}
@@ -937,19 +1062,19 @@ export default function PharmacyPOS() {
                               value={item.quantity}
                               onChange={(e) => updateQuantity(item.medicineId, Number(e.target.value))}
                               onKeyDown={(e) => handleQuantityKeyDown(e, item.medicineId)}
-                              className="w-16 text-center bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-lg py-1 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                              className="w-12 text-center bg-purple-50 border border-purple-200 rounded py-0.5 font-bold text-slate-800 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
                             />
-                            <button onClick={() => updateQuantity(item.medicineId, item.quantity + 1)} className="p-2 text-slate-400 hover:text-purple-600 hover:bg-purple-100 rounded-lg transition-all">
-                              <FiPlus className="w-4 h-4" />
+                            <button onClick={() => updateQuantity(item.medicineId, item.quantity + 1)} className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-100 rounded transition-all">
+                              <FiPlus className="w-3 h-3" />
                             </button>
                           </div>
                         </td>
-                        <td className="py-4 px-4 text-right font-bold text-lg text-purple-600">
+                        <td className="py-2 px-3 text-right font-bold text-sm text-purple-600">
                           {Number(item.totalPrice).toLocaleString()}
                         </td>
-                        <td className="py-4 px-4">
-                          <button onClick={() => removeFromCart(item.medicineId)} className="p-2 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all">
-                            <FiTrash2 className="w-5 h-5" />
+                        <td className="py-2 px-3">
+                          <button onClick={() => removeFromCart(item.medicineId)} className="p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all">
+                            <FiTrash2 className="w-4 h-4" />
                           </button>
                         </td>
                       </tr>
@@ -964,6 +1089,49 @@ export default function PharmacyPOS() {
 
         {/* Sidebar - Right Side */}
         <div className="w-full lg:w-72 flex flex-col gap-6 overflow-y-auto lg:overflow-hidden min-w-[280px]">
+          
+          {/* Customer Section */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3 shrink-0">
+            <h3 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-widest">Customer</h3>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">ID</label>
+                <input
+                  type="text"
+                  value={customerInfo.clientId}
+                  readOnly
+                  className="w-full px-2 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Name</label>
+                <input
+                  type="text"
+                  value={customerInfo.customerName}
+                  onChange={(e) => setCustomerInfo({...customerInfo, customerName: e.target.value})}
+                  className="w-full px-2 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none"
+                  placeholder="Walk-in Customer"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Contact</label>
+                <input
+                  type="text"
+                  value={customerInfo.customerContact}
+                  onChange={(e) => setCustomerInfo({...customerInfo, customerContact: e.target.value})}
+                  className="w-full px-2 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs outline-none"
+                  placeholder="Phone number"
+                />
+              </div>
+              {previousDue > 0 && (
+                <div className="flex justify-between items-center py-1.5 px-2 bg-amber-50 rounded border border-amber-100 mt-2">
+                  <span className="text-amber-700 font-bold uppercase text-[9px]">Prev. Due:</span>
+                  <span className="font-bold text-amber-700 font-mono text-[10px]">PKR {previousDue.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Bill Summary Section */}
           <div className="bg-white/80 backdrop-blur rounded-2xl shadow-xl border border-white/50 p-4 space-y-4 shrink-0">
             <h3 className="text-lg font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-2">Bill Summary</h3>
@@ -1058,7 +1226,7 @@ export default function PharmacyPOS() {
                   setCreditSuggestions([]);
                   setShowCreditSuggestions(false);
                   // Pre-fetch all credit customers for search
-                  pharmacyCreditCustomersAPI.getAll()
+                  creditCustomersAPI.getAll()
                     .then(res => setAllCreditCustomers(res.data || []))
                     .catch(() => setAllCreditCustomers([]));
                 }}

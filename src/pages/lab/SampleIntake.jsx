@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, Link } from 'react-router-dom'
 import DateRangePicker from '../../components/DateRangePicker'
-import { FiPlus, FiX, FiClipboard, FiCalendar, FiCheckCircle } from 'react-icons/fi'
+import { FiPlus, FiX, FiClipboard, FiCalendar, FiCheckCircle, FiPrinter } from 'react-icons/fi'
 import { labTestsAPI, petsAPI, labRequestsAPI } from '../../services/api'
 
 export default function SampleIntake(){
@@ -192,6 +192,28 @@ export default function SampleIntake(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.patientId])
 
+  const handleReprint = (r) => {
+    const uid = r.id || r._id;
+    const base = (typeof window !== 'undefined' ? (window.location.href.split('#')[0] || '') : '')
+    const scanUrl = `${base}#/lab/sample-intake?id=${encodeURIComponent(uid)}`
+
+    setPrintData({
+      patientName: r.petName,
+      date: r.requestDate || new Date().toISOString().slice(0, 10),
+      time: r.requestTime || '-',
+      doctor: r.doctorName || r.referredBy || '-',
+      age: r.age || '-',
+      sex: r.gender || '-',
+      species: r.species || '-',
+      ownerName: r.ownerName || '-',
+      test: r.testType === '__custom' ? (r.customTestName || 'Test') : r.testType || '-',
+      acc: r.patientId || r.testId,
+      id: uid,
+      url: scanUrl
+    })
+    setShowStickerDialog(true)
+  }
+
   const inRange = (dStr) => {
     if (!dateRange?.fromDate && !dateRange?.toDate) return true
     if (!dStr) return false
@@ -215,79 +237,74 @@ export default function SampleIntake(){
       {/* Print Styles and Sticker Template */}
       <style>{`
           @media print {
-            .no-print { display: none !important; }
+            body * { visibility: hidden; margin: 0; padding: 0; }
+            .print-only, .print-only * { visibility: visible; }
             .print-only { 
-              display: block !important; 
-              width: 90mm !important;
-              height: 55mm !important;
-              background: white !important;
               position: absolute !important;
-              top: 0 !important;
               left: 0 !important;
-              margin: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              display: flex !important;
+              justify-content: center !important;
               padding: 0 !important;
-              transform: none !important;
+              margin: 0 !important;
             }
+            .no-print { display: none !important; }
             @page { 
-              size: A4 portrait; 
+              size: auto;
               margin: 0 !important; 
-            }
-            html, body { 
-              padding: 0 !important; 
-              margin: 0 !important; 
-              width: 210mm !important;
-              height: 297mm !important;
-              overflow: visible !important;
-              background: white !important;
-            }
-            #root, .app-container {
-              display: none !important;
             }
           }
           .print-only { display: none; }
           .sticker-thermal {
             width: 90mm;
             height: 55mm;
-            padding: 4mm 5mm;
+            padding: 3mm 4mm;
             box-sizing: border-box;
-            font-family: Arial, sans-serif;
-            color: #555;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #000;
             background: #fff;
-            border: 3px solid #000;
+            border: 2px solid #000;
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
           .sticker-thermal .hospital-name {
             text-align: center;
             font-size: 18px;
-            font-weight: bold;
-            color: #666;
-            margin-bottom: 2.5mm;
-            letter-spacing: 0.5px;
+            font-weight: 800;
+            color: #000;
+            margin-bottom: 2mm;
+            letter-spacing: 0.2px;
+            border-bottom: 1px solid #000;
+            padding-bottom: 1mm;
           }
           .sticker-thermal .row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 1.5mm;
+            margin-bottom: 1mm;
             font-size: 13px;
+            color: #000;
           }
           .sticker-thermal .row-full {
-            margin-bottom: 1.5mm;
+            margin-bottom: 1mm;
             font-size: 13px;
+            color: #000;
           }
           .sticker-thermal .label {
-            font-weight: 600;
+            font-weight: 700;
+            color: #000;
+          }
+          .sticker-thermal .value {
+            font-weight: 500;
+            color: #000;
           }
           .sticker-thermal .barcode-value {
-            color: #d32f2f;
-            font-weight: bold;
-            font-size: 14px;
-          }
-          .sticker-thermal .barcode-value {
-            color: #d32f2f;
-            font-weight: bold;
-            font-size: 14px;
+            color: #000;
+            font-weight: 800;
+            font-size: 15px;
           }
       `}</style>
       {printData && (
@@ -352,11 +369,12 @@ export default function SampleIntake(){
                 <th className="py-3 px-4">Date</th>
                 <th className="py-3 px-4">Payment</th>
                 <th className="py-3 px-4">Intake Status</th>
+                <th className="py-3 px-4 text-center">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map(r => (
-                <tr key={r.id} className="border-b border-slate-100">
+                <tr key={r.id || r._id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                   <td className="py-2 px-4 font-medium text-slate-800">{r.petName}</td>
                   <td className="py-2 px-4">{r.ownerName}</td>
                   <td className="py-2 px-4">{r.testType}</td>
@@ -397,6 +415,15 @@ export default function SampleIntake(){
                       <option value="Completed">Completed</option>
                       <option value="Cancelled">Cancelled</option>
                     </select>
+                  </td>
+                  <td className="py-2 px-4 text-center">
+                    <button 
+                      onClick={() => handleReprint(r)}
+                      className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                      title="Reprint Slip"
+                    >
+                      <FiPrinter size={16} />
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -22,7 +22,9 @@ import LabDashboard from "./pages/dashboards/LabDashboard";
 import ShopDashboard from "./pages/dashboards/ShopDashboard";
 import DoctorDashboard from "./pages/doctor/Dashboard";
 import DoctorMedicines from "./pages/doctor/Medicines";
+import DoctorVaccines from "./pages/doctor/Vaccines";
 import DoctorPrescription from "./pages/doctor/Prescription";
+import DoctorPrescriptionHistory from "./pages/doctor/PrescriptionHistory";
 import DoctorDetails from "./pages/doctor/Details";
 import PatientHistory from "./pages/doctor/PatientHistory";
 import DoctorPatients from "./pages/doctor/Patients";
@@ -42,7 +44,11 @@ import ReceptionBilling from "./pages/reception/Billing";
 import ReceptionReports from "./pages/reception/Reports.jsx";
 import ReceptionForms from "./pages/reception/Forms.jsx";
 import ReceptionProcedures from "./pages/reception/Procedures.jsx";
+import ReceptionProcedureCatalog from "./pages/reception/ProcedureCatalog.jsx";
+import ReceptionProcedurePatients from "./pages/reception/ProcedurePatients.jsx";
+import ReceptionProcedurePatientDetails from "./pages/reception/ProcedurePatientDetails.jsx";
 import ReceptionSettings from "./pages/reception/Settings.jsx";
+import ReceptionShotsReminder from "./pages/reception/ShotsReminder.jsx";
 import Dashboard from "./pages/admin/Dashboard";
 import Users from "./pages/admin/Users";
 import Doctors from "./pages/admin/Doctors";
@@ -84,11 +90,19 @@ import LabSuppliers from "./pages/lab/Suppliers";
 import LabSampleIntake from "./pages/lab/SampleIntake";
 import ShopLayout from "./layouts/ShopLayout";
 import ShopDashboardPage from "./pages/shop/ShopDashboard";
-import Products from "./pages/shop/Products";
+import ShopAddProduct from "./pages/shop/AddProduct";
 import POS from "./pages/shop/POS";
 import ShopSuppliers from "./pages/shop/Suppliers";
+import ShopCompanies from "./pages/shop/Companies";
 import SalesReports from "./pages/shop/SalesReports";
 import ShopSettings from "./pages/shop/Settings";
+import ShopCreditCustomers from "./pages/shop/CreditCustomers";
+import ShopSalesHistory from "./pages/shop/SalesHistory";
+import ShopPurchaseHistory from "./pages/shop/PurchaseHistory";
+import ShopSalesReturn from "./pages/shop/SalesReturn";
+import ShopReturnHistory from "./pages/shop/ReturnHistory";
+import ShopSupplierReturns from "./pages/shop/SupplierReturns";
+import ShopNotifications from "./pages/shop/Notifications";
 import PharmacyLayout from "./layouts/PharmacyLayout";
 import PharmacyDashboardNew from "./pages/pharmacy/Dashboard";
 import Medicines from "./pages/pharmacy/Medicines";
@@ -110,6 +124,29 @@ import PharmacyNotifications from "./pages/pharmacy/Notifications";
 import PharmacyAuditLogs from "./pages/pharmacy/AuditLogs";
 import PharmacyExpenses from "./pages/pharmacy/Expenses";
 import PharmacyPurchaseOrders from "./pages/pharmacy/PurchaseOrders";
+
+import ShopPharmacyLayout from "./layouts/ShopPharmacyLayout";
+import ShopPharmacyDashboardPage from "./pages/shop/pharmacy/Dashboard";
+import ShopPharmacyMedicines from "./pages/shop/pharmacy/Medicines";
+import ShopPharmacyPOS from "./pages/shop/pharmacy/POS";
+import ShopPharmacyCreditCustomers from "./pages/shop/pharmacy/CreditCustomers";
+import ShopPharmacySuppliers from "./pages/shop/pharmacy/Suppliers";
+import ShopPharmacyCompanies from "./pages/shop/pharmacy/Companies";
+import ShopPharmacyAddInvoice from "./pages/shop/pharmacy/AddInvoice";
+import ShopPharmacyPurchaseOrders from "./pages/shop/pharmacy/PurchaseOrders";
+import ShopPharmacySalesHistory from "./pages/shop/pharmacy/SalesHistory";
+import ShopPharmacyPurchaseHistory from "./pages/shop/pharmacy/PurchaseHistory";
+import ShopPharmacyReturnHistory from "./pages/shop/pharmacy/ReturnHistory";
+import ShopPharmacySalesReturn from "./pages/shop/pharmacy/SalesReturn";
+import ShopPharmacySupplierReturns from "./pages/shop/pharmacy/SupplierReturns";
+import ShopPharmacyReferrals from "./pages/shop/pharmacy/Referrals";
+import ShopPharmacyPrescriptions from "./pages/shop/pharmacy/Prescriptions";
+import ShopPharmacyReports from "./pages/shop/pharmacy/Reports";
+import ShopPharmacyNotifications from "./pages/shop/pharmacy/Notifications";
+import ShopPharmacyAuditLogs from "./pages/shop/pharmacy/AuditLogs";
+import ShopPharmacyExpenses from "./pages/shop/pharmacy/Expenses";
+import ShopPharmacySettings from "./pages/shop/pharmacy/Settings";
+import ShopInventory from "./pages/shop/Inventory";
 
 const router = createHashRouter(
   [
@@ -185,6 +222,10 @@ const router = createHashRouter(
           { path: "reports", element: <ReceptionReports /> },
           { path: "forms", element: <ReceptionForms /> },
           { path: "procedures", element: <ReceptionProcedures /> },
+          { path: "procedure-catalog", element: <ReceptionProcedureCatalog /> },
+          { path: "procedure-patients", element: <ReceptionProcedurePatients /> },
+          { path: "procedure-patients/:petId", element: <ReceptionProcedurePatientDetails /> },
+          { path: "shots-reminder", element: <ReceptionShotsReminder /> },
           { path: "settings", element: <ReceptionSettings /> },
         ],
       },
@@ -210,7 +251,9 @@ const router = createHashRouter(
         children: [
           { index: true, element: <DoctorDashboard /> },
           { path: "medicines", element: <DoctorMedicines /> },
+          { path: "vaccines", element: <DoctorVaccines /> },
           { path: "prescription", element: <DoctorPrescription /> },
+          { path: "prescription-history", element: <DoctorPrescriptionHistory /> },
           { path: "details", element: <DoctorDetails /> },
           { path: "patients", element: <DoctorPatients /> },
           { path: "medical-forms", element: <DoctorMedicalForms /> },
@@ -227,11 +270,46 @@ const router = createHashRouter(
         element: <ShopLayout />,
         children: [
           { index: true, element: <ShopDashboardPage /> },
-          { path: "products", element: <Products /> },
+          { path: "inventory", element: <ShopInventory /> },
+          { path: "add-product", element: <ShopAddProduct /> },
           { path: "pos", element: <POS /> },
+          { path: "sales-history", element: <ShopSalesHistory /> },
+          { path: "purchase-history", element: <ShopPurchaseHistory /> },
+          { path: "sales-return", element: <ShopSalesReturn /> },
+          { path: "supplier-returns", element: <ShopSupplierReturns /> },
+          { path: "return-history", element: <ShopReturnHistory /> },
+          { path: "notifications", element: <ShopNotifications /> },
           { path: "suppliers", element: <ShopSuppliers /> },
+          { path: "companies", element: <ShopCompanies /> },
           { path: "reports", element: <SalesReports /> },
+          { path: "credit-customers", element: <ShopCreditCustomers /> },
           { path: "settings", element: <ShopSettings /> },
+        ],
+      },
+      {
+        path: "shop/pharmacy",
+        element: <ShopPharmacyLayout />,
+        children: [
+          { index: true, element: <ShopPharmacyDashboardPage /> },
+          { path: "medicines", element: <ShopPharmacyMedicines /> },
+          { path: "pos", element: <ShopPharmacyPOS /> },
+          { path: "credit-customers", element: <ShopPharmacyCreditCustomers /> },
+          { path: "suppliers", element: <ShopPharmacySuppliers /> },
+          { path: "companies", element: <ShopPharmacyCompanies /> },
+          { path: "add-invoice", element: <ShopPharmacyAddInvoice /> },
+          { path: "purchase-orders", element: <ShopPharmacyPurchaseOrders /> },
+          { path: "sales-history", element: <ShopPharmacySalesHistory /> },
+          { path: "purchase-history", element: <ShopPharmacyPurchaseHistory /> },
+          { path: "return-history", element: <ShopPharmacyReturnHistory /> },
+          { path: "sales-return", element: <ShopPharmacySalesReturn /> },
+          { path: "supplier-returns", element: <ShopPharmacySupplierReturns /> },
+          { path: "referrals", element: <ShopPharmacyReferrals /> },
+          { path: "prescriptions", element: <ShopPharmacyPrescriptions /> },
+          { path: "reports", element: <ShopPharmacyReports /> },
+          { path: "notifications", element: <ShopPharmacyNotifications /> },
+          { path: "audit-logs", element: <ShopPharmacyAuditLogs /> },
+          { path: "expenses", element: <ShopPharmacyExpenses /> },
+          { path: "settings", element: <ShopPharmacySettings /> },
         ],
       },
       {
