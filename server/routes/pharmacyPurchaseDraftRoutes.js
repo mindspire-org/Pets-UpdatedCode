@@ -267,15 +267,23 @@ router.post("/:draftId/items/:itemId/approve", async (req, res) => {
     }
 
     // Create the medicine record
-    const med = await createMedicineFromItem(item, draft);
+    let med;
+    try {
+      med = await createMedicineFromItem(item, draft);
+    } catch (medErr) {
+      return res.status(500).json({ success: false, message: `Failed to create/update medicine: ${medErr.message}` });
+    }
 
     // Create a PharmacyPurchase row for this item (shows in purchase history)
     const itemIndex = draft.items.findIndex((i) => String(i._id) === String(req.params.itemId));
-    const purchase = await createPurchaseRowForItem(item, draft, itemIndex >= 0 ? itemIndex : 0);
-    
-    // Save reviewer name to the purchase record
-    purchase.reviewedBy = reviewedBy;
-    await purchase.save();
+    let purchase;
+    try {
+      purchase = await createPurchaseRowForItem(item, draft, itemIndex >= 0 ? itemIndex : 0);
+      purchase.reviewedBy = reviewedBy;
+      await purchase.save();
+    } catch (purErr) {
+      return res.status(500).json({ success: false, message: `Failed to create purchase record: ${purErr.message}` });
+    }
 
     // Mark item approved
     item.itemStatus         = "approved";
@@ -289,8 +297,8 @@ router.post("/:draftId/items/:itemId/approve", async (req, res) => {
     draft.reviewedBy = reviewedBy;
     draft.reviewedAt = new Date();
 
-    // If draft is now fully resolved, create the invoice record
-    if (draft.status !== "pending") {
+    // If draft is now fully resolved, create the invoice record (only once)
+    if (draft.status !== "pending" && !draft.convertedInvoiceId) {
       const approvedItems = draft.items.filter((i) => i.itemStatus === "approved");
       if (approvedItems.length > 0) {
         const invoice = new PharmacyInvoice({
