@@ -802,18 +802,21 @@ export default function Medicines({
         if (allProcessed) {
           await purchaseDraftsAPI.delete(draftId);
           console.log("Purchase draft deleted after all items processed:", draftId);
-          showToast("All items processed - draft deleted");
+          showToast("All items processed - draft removed");
         }
       } catch (checkErr) {
         console.error("Error checking draft status after item approval:", checkErr);
       }
-
-      fetchPurchaseDrafts();
-      fetchMedicines();
     } catch (error) {
-      showToast(error.message || "Error approving item");
+      if (error.status === 404 || (error.message || "").toLowerCase().includes("not found")) {
+        showToast("This draft no longer exists — it may have been processed already. Refreshing...");
+      } else {
+        showToast(error.message || "Error approving item");
+      }
     } finally {
       setLoading(false);
+      fetchPurchaseDrafts();
+      fetchMedicines();
     }
   };
 
@@ -835,17 +838,20 @@ export default function Medicines({
         if (allProcessed) {
           await purchaseDraftsAPI.delete(draftId);
           console.log("Purchase draft deleted after all items processed:", draftId);
-          showToast("All items processed - draft deleted");
+          showToast("All items processed - draft removed");
         }
       } catch (checkErr) {
         console.error("Error checking draft status after item rejection:", checkErr);
       }
-
-      fetchPurchaseDrafts();
     } catch (error) {
-      showToast(error.message || "Error rejecting item");
+      if (error.status === 404 || (error.message || "").toLowerCase().includes("not found")) {
+        showToast("This draft no longer exists — it may have been processed already. Refreshing...");
+      } else {
+        showToast(error.message || "Error rejecting item");
+      }
     } finally {
       setLoading(false);
+      fetchPurchaseDrafts();
     }
   };
 

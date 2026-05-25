@@ -175,6 +175,27 @@ async function createMedicineFromItem(item, draft) {
   return med;
 }
 
+// ── GET stats (must be before /:id to avoid being matched as an id) ─────────
+router.get("/stats/summary", async (req, res) => {
+  try {
+    const { portal = "pharmacy" } = req.query;
+    const stats = await PharmacyPurchaseDraft.aggregate([
+      { $match: { portal } },
+      { $group: { _id: "$status", count: { $sum: 1 }, totalValue: { $sum: "$netTotal" } } },
+    ]);
+    const summary = {
+      pending:  { count: 0, totalValue: 0 },
+      approved: { count: 0, totalValue: 0 },
+      rejected: { count: 0, totalValue: 0 },
+      partial:  { count: 0, totalValue: 0 },
+    };
+    stats.forEach((s) => { if (summary[s._id]) summary[s._id] = { count: s.count, totalValue: s.totalValue }; });
+    res.json({ success: true, data: summary });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── GET all purchase drafts ─────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -543,27 +564,6 @@ router.delete("/:id", async (req, res) => {
     
     await PharmacyPurchaseDraft.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: "Draft deleted" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// ── GET stats ───────────────────────────────────────────────────────────────
-router.get("/stats/summary", async (req, res) => {
-  try {
-    const { portal = "pharmacy" } = req.query;
-    const stats = await PharmacyPurchaseDraft.aggregate([
-      { $match: { portal } },
-      { $group: { _id: "$status", count: { $sum: 1 }, totalValue: { $sum: "$netTotal" } } },
-    ]);
-    const summary = {
-      pending:  { count: 0, totalValue: 0 },
-      approved: { count: 0, totalValue: 0 },
-      rejected: { count: 0, totalValue: 0 },
-      partial:  { count: 0, totalValue: 0 },
-    };
-    stats.forEach((s) => { if (summary[s._id]) summary[s._id] = { count: s.count, totalValue: s.totalValue }; });
-    res.json({ success: true, data: summary });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
