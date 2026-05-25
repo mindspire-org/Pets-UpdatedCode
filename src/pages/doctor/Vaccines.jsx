@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { vaccinesAPI, settingsAPI } from '../../services/api'
 
 export default function DoctorVaccines(){
-  const emptyShot = { dateGiven: '', nextDue: '', vet: '', shotStage: '' }
+  const emptyShot = { dateGiven: '', nextDue: '', vet: '', shotStage: '', daysUntilNext: '' }
   const emptyRow = { name: '', route: 'Intramuscular (IM)', instructions: '', shots: [{ ...emptyShot }] }
   const [form, setForm] = useState({ id:null, condition:'', rows:[{...emptyRow}] })
   const [items, setItems] = useState([])
@@ -112,13 +112,39 @@ export default function DoctorVaccines(){
     return list.slice(start, start + pageSize)
   },[filtered,page,pageSize])
 
-  // Helper to compute next due date based on shot stage
-  const calcNextDue = (dateStr, stage) => {
-    if(!dateStr || !stage) return ''
+  // Helper to compute next due date based on shot stage or explicit days
+  const calcNextDue = (dateStr, stage, daysOverride) => {
+    if(!dateStr) return ''
     const dt = new Date(dateStr)
-    const days = ['1st','2nd','3rd','4th'].includes(stage) ? 21 : 365
+    let days = daysOverride ? parseInt(daysOverride) : NaN
+    if (!Number.isFinite(days) || days <= 0) {
+      days = ['1st','2nd','3rd','4th'].includes(stage) ? 21 : 365
+    }
     dt.setDate(dt.getDate() + days)
     return dt.toISOString().slice(0,10)
+  }
+
+  // ARV post-exposure schedule: shots at day 0, 2, 6, 13, 27
+  const ARV_INTERVALS = [0, 2, 6, 13, 27]
+  const ARV_STAGES = ['1st', '2nd', '3rd', '4th', 'Annual booster']
+  const applyARVPreset = () => {
+    const today = new Date()
+    const fmt = (d) => d.toISOString().slice(0,10)
+    const arvShots = ARV_INTERVALS.map((offset, i) => {
+      const shotDate = new Date(today)
+      shotDate.setDate(today.getDate() + offset)
+      const nextOffset = ARV_INTERVALS[i + 1]
+      const days = nextOffset !== undefined ? (nextOffset - offset) : ''
+      const nextDue = nextOffset !== undefined
+        ? fmt(new Date(today.getFullYear(), today.getMonth(), today.getDate() + nextOffset))
+        : ''
+      return { dateGiven: fmt(shotDate), nextDue, vet: '', shotStage: ARV_STAGES[i], daysUntilNext: String(days) }
+    })
+    setForm(f => ({
+      ...f,
+      condition: f.condition || 'Post Exposure (Rabies ARV)',
+      rows: [{ name: 'Nobivac', route: 'Intramuscular (IM)', instructions: '1ml per dose', shots: arvShots }]
+    }))
   }
 
   const addRow = () => setForm(f=>({ ...f, rows:[...f.rows, { ...emptyRow, shots: [{ ...emptyShot }] }] }))
@@ -157,8 +183,10 @@ export default function DoctorVaccines(){
       const newShots = shots.map((s, si) => {
         if (si !== shotIdx) return s
         const updated = { ...s, [field]: value }
-        if (field === 'dateGiven' || field === 'shotStage') {
-          updated.nextDue = calcNextDue(updated.dateGiven, updated.shotStage)
+        if (field === 'dateGiven' || field === 'shotStage' || field === 'daysUntilNext') {
+          if (updated.dateGiven && (updated.daysUntilNext || updated.shotStage)) {
+            updated.nextDue = calcNextDue(updated.dateGiven, updated.shotStage, updated.daysUntilNext)
+          }
         }
         return updated
       })
@@ -291,13 +319,13 @@ export default function DoctorVaccines(){
         <form onSubmit={save} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="md:col-span-2">
-              <label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
                 Medical Condition / Vaccine Type
               </label>
               <input className="h-12 px-4 rounded-xl border-2 border-slate-200 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 w-full transition-all duration-200 bg-white shadow-sm" placeholder="e.g., Rabies, DHPPiL" value={form.condition} onChange={e=>setForm(s=>({...s,condition:e.target.value}))} required />
             </div>
             <div className="md:col-span-1">
-              <label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
                 Search Regimens
               </label>
               <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search..." className="h-12 px-4 rounded-xl border-2 border-slate-200 focus:border-teal-400 focus:ring-4 focus:ring-teal-100 w-full transition-all duration-200 bg-white shadow-sm" />
@@ -305,8 +333,16 @@ export default function DoctorVaccines(){
           </div>
 
           <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex flex-wrap items-center gap-3 mb-2">
               <h3 className="text-lg font-semibold text-slate-800">Vaccine Regimen</h3>
+              <button
+                type="button"
+                onClick={applyARVPreset}
+                className="h-9 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs font-bold shadow transition-all flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"/></svg>
+                Post Exposure (ARV) Preset
+              </button>
             </div>
             {form.rows.map((r, idx)=> (
               <div key={idx} className="group rounded-xl border-2 border-slate-200 hover:border-emerald-300 p-4 bg-gradient-to-br from-white to-emerald-50/30 shadow-sm hover:shadow-md transition-all duration-200 relative">
@@ -339,7 +375,7 @@ export default function DoctorVaccines(){
                         {r.shots.length > 1 && (
                           <button type="button" onClick={() => removeShot(idx, sIdx)} className="absolute -top-2 -right-2 w-6 h-6 bg-red-100 text-red-600 rounded-full flex items-center justify-center opacity-0 group-hover/shot:opacity-100 transition-all border border-red-200 hover:bg-red-600 hover:text-white">×</button>
                         )}
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Date Given</label>
                             <input type="date" value={shot.dateGiven} onChange={e=>updateShot(idx, sIdx, 'dateGiven', e.target.value)} className="h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-emerald-400 w-full text-sm" />
@@ -356,8 +392,12 @@ export default function DoctorVaccines(){
                             </select>
                           </div>
                           <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Next Due (auto)</label>
-                            <input value={shot.nextDue} readOnly placeholder="Next Due (auto)" className="h-10 px-3 rounded-lg border-2 border-slate-200 bg-slate-100 w-full text-sm" />
+                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Days Until Next</label>
+                            <input type="number" min="0" value={shot.daysUntilNext} onChange={e=>updateShot(idx, sIdx, 'daysUntilNext', e.target.value)} placeholder="e.g. 2" className="h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-emerald-400 w-full text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Next Due</label>
+                            <input type="date" value={shot.nextDue} onChange={e=>updateShot(idx, sIdx, 'nextDue', e.target.value)} placeholder="Next Due" className="h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-emerald-400 w-full text-sm" />
                           </div>
                           <div>
                             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Vet Name</label>

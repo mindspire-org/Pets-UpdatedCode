@@ -756,7 +756,13 @@ export default function PharmacyPOS({ apis } = {}) {
       fetchMedicines();
     } catch (error) {
       console.error('Error processing sale:', error);
-      showToast('Error processing sale. Please try again.');
+      const status = error?.response?.status || error?.status
+      const msg = error?.response?.data?.message || error?.data?.message || error?.message || ''
+      if (status === 423 || msg.toLowerCase().includes('day is not open')) {
+        showToast('Day not opened — please open the pharmacy day session before making a sale.')
+      } else {
+        showToast(msg || 'Error processing sale. Please try again.')
+      }
     }
   };
 
@@ -1484,7 +1490,7 @@ export default function PharmacyPOS({ apis } = {}) {
                       placeholder="0.00"
                     />
                   </div>
-                  <div className="flex justify-between items-center px-1 py-2 rounded-lg bg-red-50 border-2 border-red-200 px-4">
+                  <div className="flex justify-between items-center px-4 py-2 rounded-lg bg-red-50 border-2 border-red-200">
                     <span className="text-red-600 font-bold text-base">Payable / Dues:</span>
                     <span className="text-red-600 font-black text-xl font-mono">
                       PKR {Math.max(0, payableTotal - (Number(receivedAmount) || 0)).toFixed(2)}

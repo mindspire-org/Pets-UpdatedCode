@@ -14,10 +14,8 @@ export default function PrintPrescription({
   const isVaccineItem = (it) => {
     if (!it) return false
     if (it.isVaccine === true) return true
-    // Legacy fallbacks: if it has shots array, treat as vaccine
-    if (Array.isArray(it.shots) && it.shots.length) return true
-    // Some older vaccine rows were saved as Fixed Dose
-    if (String(it.doseType || '').toLowerCase().includes('fixed')) return true
+    // Legacy fallback: if it has a non-empty shots array with actual data, treat as vaccine
+    if (Array.isArray(it.shots) && it.shots.length && it.shots.some(s => s?.dateGiven || s?.shotStage)) return true
     return false
   }
   const formatVaccineStage = (stage) => {
@@ -86,7 +84,7 @@ export default function PrintPrescription({
     const renderGroupsHTML = (groupMap, groupKeys) => {
       return groupKeys.length ? groupKeys.map((k)=>{
         const rows = groupMap[k].map(x=>{
-        let displayDose = x.dose
+        let displayDose = x.dose || x.dosage || x.composition || ''
         try {
           // Fixed Dose: use the dose field directly without calculation
           if (x.doseType === 'Fixed Dose') {
@@ -479,7 +477,7 @@ export default function PrintPrescription({
                         {k!=='General' && <div className="font-semibold text-rose-700 mb-1">Condition: {k}</div>}
                         <div className="pl-3 border-l-2 border-slate-300 space-y-2">
                           {groups[k].map((x,i)=> {
-                            let displayDose = x.dose
+                            let displayDose = x.dose || x.dosage || x.composition || ''
                             const hasPos = (v) => { const n = extractNum(v); return Number.isFinite(n) && n>0 }
                             const fluid = computeFluid(patientMerge)
                             const wsrc = (patientMerge?.weightKg ?? patientMerge?.weight ?? patientMerge?.details?.weightKg)

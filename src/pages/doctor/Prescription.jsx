@@ -906,6 +906,54 @@ export default function DoctorPrescription(){
 
   const canSave = patient && items.length>0
 
+  const saveAndPrint = async () => {
+    if (!canSave) {
+      showToast('Please select a patient and add at least one medicine', 'error')
+      return
+    }
+    const doc = {
+      id: editingId || 'PRX-' + Date.now(),
+      when: new Date().toISOString(),
+      patient: { ...patient, id: patient.id || patientId },
+      items: [...items],
+      note,
+      notes: { ...notes },
+      doctor: JSON.parse(localStorage.getItem('doctor_auth') || '{}')
+    }
+    await save()
+    openPreview(doc)
+  }
+
+  const referToPharmacy = async () => {
+    if (!canSave) {
+      showToast('Please select a patient and add at least one medicine', 'error')
+      return
+    }
+    await save()
+    const meds = items
+      .filter(x => !x.isVaccine)
+      .map(x => ({ name: x.name, dosage: x.dose ? `${x.dose} ${x.unit || 'ml'}` : (x.unit || ''), instructions: x.instructions || '', quantity: 1, unit: x.unit || '' }))
+    const referral = {
+      id: 'REF-' + Date.now(),
+      patientId: patient.id || patientId,
+      petName: patient.petName || '',
+      ownerName: patient.ownerName || '',
+      contact: patient.ownerContact || '',
+      medicines: meds,
+      note,
+      status: 'Pending',
+      createdAt: new Date().toISOString(),
+    }
+    try {
+      const existing = JSON.parse(localStorage.getItem('pharmacy_referrals') || '[]')
+      localStorage.setItem('pharmacy_referrals', JSON.stringify([referral, ...(Array.isArray(existing) ? existing : [])]))
+      setReferralData(referral)
+      setShowReferralSuccess(true)
+    } catch (e) {
+      showToast('Failed to send referral to pharmacy', 'error')
+    }
+  }
+
   const save = async () => {
     if(!canSave) {
       showToast('Please select a patient and add at least one medicine', 'error')
@@ -1154,7 +1202,7 @@ export default function DoctorPrescription(){
       <div className="rounded-2xl bg-gradient-to-br from-white to-slate-50 shadow-xl ring-1 ring-slate-200/50 p-6 border border-slate-100">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="md:col-span-2">
-            <label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-2">
               <svg className="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd"/></svg>
               Patient ID / Search
             </label>
@@ -1672,7 +1720,7 @@ export default function DoctorPrescription(){
                             <input className="w-full h-10 px-3 rounded-lg border-2 border-slate-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white text-slate-700 text-sm placeholder-slate-400 transition-all" placeholder="ml" value={x.unit||''} onChange={e=>updateItem(x.id,'unit',e.target.value)} />
                           </div>
                           <div>
-                            <label className="block text-xs font-semibold text-emerald-700 mb-1.5 flex items-center gap-1">
+                            <label className="flex items-center gap-1 text-xs font-semibold text-emerald-700 mb-1.5">
                               <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/></svg>
                               Calculated Dose
                             </label>
@@ -1769,7 +1817,7 @@ export default function DoctorPrescription(){
 
                   {/* Instructions Section */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-2 flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">
                       <svg className="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/></svg>
                       Instructions
                     </label>
@@ -1798,10 +1846,18 @@ export default function DoctorPrescription(){
             </div>
           )}
         
-        <div className="mt-6 flex gap-3">
+        <div className="mt-6 flex flex-wrap gap-3">
           <button onClick={save} disabled={!canSave} className={`px-8 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
             {editingId ? 'Update Prescription' : 'Save Prescription'}
+          </button>
+          <button onClick={saveAndPrint} disabled={!canSave} className={`px-8 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a1 1 0 001 1h8a1 1 0 001-1v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a1 1 0 00-1-1H6a1 1 0 00-1 1zm2 0h6v3H7V4zm-1 9h8v3H6v-3zm8-4a1 1 0 110 2 1 1 0 010-2z" clipRule="evenodd"/></svg>
+            Save &amp; Print
+          </button>
+          <button onClick={referToPharmacy} disabled={!canSave} className={`px-8 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${canSave?'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white':'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>
+            Refer to Pharmacy
           </button>
           <button onClick={resetAll} className="px-6 h-12 rounded-xl font-semibold cursor-pointer transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 bg-gradient-to-r from-slate-500 to-slate-600 hover:from-slate-600 hover:to-slate-700 text-white">
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd"/></svg>

@@ -1887,11 +1887,9 @@ export default function ReceptionPets(){
       let due = numVal(dueRaw)
       if (!billed && (received || due)) billed = Math.max(0, received + due)
       if (!due && billed) due = Math.max(0, billed - received)
-      const id = pid
-
       // Row-level validation (only require essential fields)
       const missing = []
-      if (!id) missing.push('Client ID')
+      if (!pid) missing.push('Client ID')
       if (!petName) missing.push('Pet Name')
       if (!ownerName) missing.push('Owner Name')
       if (missing.length) {
@@ -1899,19 +1897,17 @@ export default function ReceptionPets(){
         rowErrors.push(`Row ${created+skipped}: Missing ${missing.join(', ')}`)
         continue
       }
-      
-      if(existingIds.has(id)) {
-        // Backfill financials for existing pet
-        if (billed>0 || received>0 || due>0) {
-          openings.push({ petId:id, clientId: clientId || id, petName, ownerName, contact, billed, received, due, note:'Imported from Excel (Backfill)' })
-        }
-        if ((clientId || id) && due>0) {
-          try { await pharmacyDuesAPI.upsert((clientId||id), { previousDue: due, name: ownerName, customerContact: contact }) } catch {}
-        }
-        skipped++; rowErrors.push(`Duplicate: ${id}`); continue
+
+      // Generate a unique petId: if pid already taken (another pet of same client),
+      // append a numeric suffix until unique e.g. CL-001-P2, CL-001-P3
+      let id = pid
+      if (existingIds.has(id)) {
+        let suffix = 2
+        while (existingIds.has(`${pid}-P${suffix}`)) suffix++
+        id = `${pid}-P${suffix}`
       }
       
-      const ownerId = clientId || id
+      const ownerId = clientId || pid
       const petData = {
         id,
         clientId: clientId || ownerId,

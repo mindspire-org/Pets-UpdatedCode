@@ -564,7 +564,13 @@ export default function EnhancedPharmacyPOS() {
       }
     } catch (error) {
       console.error('Error processing sale:', error);
-      showToast('Error processing sale', 'error');
+      const status = error?.response?.status || error?.status
+      const msg = error?.response?.data?.message || error?.data?.message || error?.message || ''
+      if (status === 423 || msg.toLowerCase().includes('day is not open')) {
+        showToast('Day not opened — please open the pharmacy day session before making a sale.', 'error')
+      } else {
+        showToast(msg || 'Error processing sale', 'error')
+      }
     } finally {
       setIsProcessing(false);
     }
