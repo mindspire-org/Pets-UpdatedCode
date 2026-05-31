@@ -90,20 +90,7 @@ router.get('/medicines', async (req, res) => {
   }
 });
 
-// Get medicine by ID
-router.get('/medicines/:id', async (req, res) => {
-  try {
-    const medicine = await PharmacyMedicine.findById(req.params.id);
-    if (!medicine) {
-      return res.status(404).json({ success: false, message: 'Medicine not found' });
-    }
-    res.json({ success: true, data: medicine });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Search medicines by name or barcode
+// Search medicines by name or barcode — MUST be before /:id
 router.get('/medicines/search/:query', async (req, res) => {
   try {
     const query = req.params.query;
@@ -134,7 +121,7 @@ router.get('/medicines/search/:query', async (req, res) => {
   }
 });
 
-// Get low stock medicines
+// Get low stock medicines — MUST be before /:id
 router.get('/medicines/alerts/low-stock', async (req, res) => {
   try {
     const medicines = await PharmacyMedicine.find({ isActive: true });
@@ -151,7 +138,7 @@ router.get('/medicines/alerts/low-stock', async (req, res) => {
   }
 });
 
-// Get expiring medicines (within 30 days)
+// Get expiring medicines (within 30 days) — MUST be before /:id
 router.get('/medicines/alerts/expiring', async (req, res) => {
   try {
     const thirtyDaysFromNow = new Date();
@@ -171,7 +158,7 @@ router.get('/medicines/alerts/expiring', async (req, res) => {
   }
 });
 
-// Get expired medicines
+// Get expired medicines — MUST be before /:id
 router.get('/medicines/alerts/expired', async (req, res) => {
   try {
     const medicines = await PharmacyMedicine.find({
@@ -180,6 +167,19 @@ router.get('/medicines/alerts/expired', async (req, res) => {
     }).sort({ expiryDate: -1 });
     
     res.json({ success: true, data: medicines });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get medicine by ID — wildcard, must be LAST among GET /medicines/* routes
+router.get('/medicines/:id', async (req, res) => {
+  try {
+    const medicine = await PharmacyMedicine.findById(req.params.id);
+    if (!medicine) {
+      return res.status(404).json({ success: false, message: 'Medicine not found' });
+    }
+    res.json({ success: true, data: medicine });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -216,6 +216,69 @@ router.post('/medicines', async (req, res) => {
       const msg = key === 'barcode' ? 'Medicine with this barcode already exists' : 'Medicine with this batch number already exists';
       return res.status(400).json({ success: false, message: msg });
     }
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Bulk upsert medicines (for Excel import) — processes all rows in one DB round-trip
+router.post('/medicines/bulk-upsert', async (req, res) => {
+  try {
+    const rows = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'rows array is required' });
+    }
+
+    let created = 0, updated = 0, errors = 0;
+    const errorList = [];
+
+    // Fetch all existing barcodes in one query
+    const barcodes = rows.map(r => String(r.barcode || '').trim()).filter(Boolean);
+    const existing = await PharmacyMedicine.find({ barcode: { $in: barcodes } }).lean();
+    const existingMap = new Map(existing.map(m => [String(m.barcode).trim().toLowerCase(), m]));
+
+    const bulkOps = [];
+    for (const row of rows) {
+      try {
+        const barcode = String(row.barcode || '').trim();
+        if (!barcode) { errors++; errorList.push('Row missing barcode'); continue; }
+
+        const payload = { ...row };
+        // Injection remainingMl auto-calc
+        if ((payload.category || '').toLowerCase() === 'injection') {
+          if (!payload.remainingMl && payload.mlPerVial && payload.quantity) {
+            payload.remainingMl = payload.mlPerVial * payload.quantity;
+          }
+        }
+
+        const existingDoc = existingMap.get(barcode.toLowerCase());
+        if (existingDoc) {
+          bulkOps.push({
+            updateOne: {
+              filter: { _id: existingDoc._id },
+              update: { $set: payload },
+              upsert: false,
+            }
+          });
+          updated++;
+        } else {
+          payload.originalQuantity = payload.quantity || 0;
+          bulkOps.push({
+            insertOne: { document: { ...payload, barcode } }
+          });
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        errorList.push(e.message);
+      }
+    }
+
+    if (bulkOps.length > 0) {
+      await PharmacyMedicine.bulkWrite(bulkOps, { ordered: false });
+    }
+
+    res.json({ success: true, created, updated, errors, errorList });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });

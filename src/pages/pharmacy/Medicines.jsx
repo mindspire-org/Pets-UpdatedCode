@@ -1607,152 +1607,46 @@ export default function Medicines({
       const file = e.target.files?.[0];
       if (!file) return;
       setLoading(true);
+
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
-      const existingByBarcode = new Map(
-        (medicines || [])
-          .filter((m) => m.barcode)
-          .map((m) => [String(m.barcode).toLowerCase(), m]),
-      );
-      const normalizeBc = (v) =>
-        String(v || "")
-          .trim()
-          .toLowerCase();
-      const knownByBarcode = new Map(existingByBarcode);
-      const tryFindExisting = async (barcode) => {
-        const bc = normalizeBc(barcode);
-        if (!bc) return null;
-        let existing = knownByBarcode.get(bc);
-        if (existing && existing._id) return existing;
-        try {
-          const direct = await medicinesAPI.findByBarcode(barcode);
-          const med = direct?.data || (direct && direct.success && direct.data);
-          if (med && med._id) return med;
-        } catch (e) { if (e?.status !== 404) console.warn("findByBarcode error:", e?.message); }
-        try {
-          const res = await medicinesAPI.search(barcode);
-          const list = Array.isArray(res?.data)
-            ? res.data
-            : Array.isArray(res)
-              ? res
-              : [];
-          existing = (list || []).find((m) => normalizeBc(m.barcode) === bc);
-          if (existing && existing._id) return existing;
-        } catch {}
-        try {
-          const all = await medicinesAPI.getAll();
-          const list = Array.isArray(all?.data)
-            ? all.data
-            : Array.isArray(all)
-              ? all
-              : [];
-          existing = (list || []).find((m) => normalizeBc(m.barcode) === bc);
-          return existing || null;
-        } catch {
-          return null;
-        }
-      };
 
-      const upsertByBarcode = async (payload) => {
-        const bc = normalizeBc(payload.barcode);
-        if (bc) {
-          let existing = await tryFindExisting(payload.barcode);
-          if (existing && existing._id) {
-            await medicinesAPI.update(existing._id, payload);
-            knownByBarcode.set(bc, existing);
-            return "updated";
-          }
-        }
-        try {
-          const created = await medicinesAPI.create(payload);
-          if (bc) {
-            const id = created?.data?._id || created?._id;
-            if (id) knownByBarcode.set(bc, { _id: id });
-          }
-          return "created";
-        } catch (err) {
-          const msg = (
-            err?.response?.message ||
-            err?.message ||
-            ""
-          ).toLowerCase();
-          if (msg.includes("barcode") && msg.includes("exists")) {
-            try {
-              const existing = await tryFindExisting(payload.barcode);
-              if (existing && existing._id) {
-                await medicinesAPI.update(existing._id, payload);
-                knownByBarcode.set(bc, existing);
-                return "updated";
-              }
-            } catch {}
-          }
-          throw err;
-        }
-      };
-      let created = 0,
-        updated = 0,
-        errors = 0;
       const toNum = (v, d = 0) => {
         if (typeof v === "number") return isFinite(v) ? v : d;
         if (!v) return d;
         const n = parseFloat(String(v).replace(/,/g, ""));
         return isNaN(n) ? d : n;
       };
-      for (const row of json) {
-        const payload = {
-          medicineName:
-            row.MedicineName || row["Medicine Name"] || row.Name || "",
-          batchNo: row.BatchNo || row["Batch No"] || row.Batch || "",
-          barcode: row.Barcode || row["Bar Code"] || row.Code || "",
-          mainCategory:
-            row.MainCategory || row["Main Category"] || row.MainCat || "",
-          subCategory:
-            row.Category ||
-            row.SubCategory ||
-            row["Sub Category"] ||
-            row.SubCat ||
-            "",
-          category:
-            row.Category || row.SubCategory || row["Sub Category"] || "",
-          unit: row.Unit || "",
-          containerType: row.ContainerType || row["Container Type"] || "",
-          quantity: toNum(row.QuantityInStock ?? row.Quantity ?? row.Qty, 0),
-          mlPerVial: toNum(
-            row.MLperContainer ?? row["ML per Vial"] ?? row.ML,
-            0,
-          ),
-          remainingMl: toNum(row.RemainingML ?? row["Remaining ML"], 0),
-          purchasePrice: toNum(row.PurchasePrice ?? row["Purchase Price"], 0),
-          salePrice: toNum(row.SalePrice ?? row["Sale Price"], 0),
-          supplierName: row.Supplier || row["Supplier Name"] || "Unknown",
-          purchaseDate: parseDate(
-            row.PurchaseDate || row["Purchase Date"] || "",
-          ),
-          expiryDate: parseDate(row.ExpiryDate || row["Expiry Date"] || ""),
-          lowStockThreshold:
-            toNum(row.LowStockThreshold ?? row["Low Stock Threshold"], 10) ||
-            10,
-          description: row.Description || "",
-          isActive: true,
-        };
-        // Auto-calc remainingMl for injections if not provided
-        if ((payload.category || "").toLowerCase() === "injection") {
-          if (!payload.remainingMl && payload.mlPerVial && payload.quantity) {
-            payload.remainingMl = payload.mlPerVial * payload.quantity;
-          }
-        }
-        try {
-          const result = await upsertByBarcode(payload);
-          if (result === "updated") updated++;
-          else if (result === "created") created++;
-          else created++;
-        } catch (err) {
-          console.error("Import row error:", err);
-          errors++;
-        }
-      }
+
+      // Build all payloads client-side — zero API calls here
+      const rows = json.map((row) => ({
+        medicineName: row.MedicineName || row["Medicine Name"] || row.Name || "",
+        batchNo: row.BatchNo || row["Batch No"] || row.Batch || "",
+        barcode: row.Barcode || row["Bar Code"] || row.Code || "",
+        mainCategory: row.MainCategory || row["Main Category"] || row.MainCat || "",
+        subCategory: row.Category || row.SubCategory || row["Sub Category"] || row.SubCat || "",
+        category: row.Category || row.SubCategory || row["Sub Category"] || "",
+        unit: row.Unit || "",
+        containerType: row.ContainerType || row["Container Type"] || "",
+        quantity: toNum(row.QuantityInStock ?? row.Quantity ?? row.Qty, 0),
+        mlPerVial: toNum(row.MLperContainer ?? row["ML per Vial"] ?? row.ML, 0),
+        remainingMl: toNum(row.RemainingML ?? row["Remaining ML"], 0),
+        purchasePrice: toNum(row.PurchasePrice ?? row["Purchase Price"], 0),
+        salePrice: toNum(row.SalePrice ?? row["Sale Price"], 0),
+        supplierName: row.Supplier || row["Supplier Name"] || "Unknown",
+        purchaseDate: parseDate(row.PurchaseDate || row["Purchase Date"] || ""),
+        expiryDate: parseDate(row.ExpiryDate || row["Expiry Date"] || ""),
+        lowStockThreshold: toNum(row.LowStockThreshold ?? row["Low Stock Threshold"], 10) || 10,
+        description: row.Description || "",
+        isActive: true,
+      }));
+
+      // One single API call for everything
+      const result = await medicinesAPI.bulkUpsert(rows);
+      const { created = 0, updated = 0, errors = 0 } = result?.data || result || {};
+
       await fetchMedicines();
       showToast(
         `Import complete: ${created} created, ${updated} updated${errors ? `, ${errors} failed` : ""}`,

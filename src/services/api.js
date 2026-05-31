@@ -360,6 +360,7 @@ export const pharmacyMedicinesAPI = {
   update: (id, medicineData) =>
     apiCall(`/pharmacy/medicines/${id}`, "PUT", medicineData),
   delete: (id) => apiCall(`/pharmacy/medicines/${id}`, "DELETE"),
+  bulkUpsert: (rows) => apiCall("/pharmacy/medicines/bulk-upsert", "POST", rows),
 };
 
 export const pharmacySalesAPI = {
