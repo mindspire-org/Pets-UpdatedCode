@@ -985,7 +985,7 @@ export default function AddInvoice() {
             Held Invoices
           </button>
 
-          {grandTotal > 0 && (
+          {invoiceItems.length > 0 && (
             <>
               <div className="w-px h-8 bg-slate-300 mx-1" />
               <button
@@ -997,13 +997,15 @@ export default function AddInvoice() {
                 {saving && <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
                 {editingDraftId ? "Update Draft" : "Submit for Review"}
               </button>
-              <div className="text-right">
-                <p className="text-xs text-slate-500">Net Total</p>
-                <p className="text-2xl font-bold text-purple-700">
-                  PKR {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-              </div>
             </>
+          )}
+          {grandTotal > 0 && (
+            <div className="text-right">
+              <p className="text-xs text-slate-500">Net Total</p>
+              <p className="text-2xl font-bold text-purple-700">
+                PKR {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -1886,7 +1888,11 @@ function InvoiceItemCard({ item, idx, canRemove, onUpdate, onRemove, onAddMainCa
               <div key={key}>
                 <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
                 <input type="number" required={required} min={min} step={step} value={item[key]}
-                  onChange={(e) => onUpdate({ [key]: Number(e.target.value) || 0 })}
+                  onChange={(e) => {
+                    const update = { [key]: Number(e.target.value) || 0 };
+                    if (key === 'qtyPacks' || key === 'unitsPerPack') update.totalItems = null;
+                    onUpdate(update);
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm" />
               </div>
             ))}
@@ -1902,8 +1908,9 @@ function InvoiceItemCard({ item, idx, canRemove, onUpdate, onRemove, onAddMainCa
             ))}
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Total Items</label>
-              <input type="number" min="0" value={totalItems}
-                onChange={(e) => onUpdate({ totalItems: Number(e.target.value) || 0 })}
+              <input type="number" min="0"
+                value={item.totalItems != null ? item.totalItems : computedTotalItems}
+                onChange={(e) => onUpdate({ totalItems: e.target.value === '' ? null : (Number(e.target.value) || 0) })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm" />
             </div>
             <div>

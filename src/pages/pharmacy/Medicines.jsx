@@ -397,6 +397,48 @@ export default function Medicines({
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [activeTab, setActiveTab] = useState(initialTab || "all");
   const importInputRef = useRef();
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  const toggleSelectAll = (pageItems) => {
+    const pageIds = pageItems.map((m) => m._id);
+    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const toggleSelectOne = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.size} selected medicine(s)?`)) return;
+    setLoading(true);
+    let deleted = 0;
+    for (const id of selectedIds) {
+      try { await medicinesAPI.delete(id); deleted++; } catch {}
+    }
+    setSelectedIds(new Set());
+    fetchMedicines();
+    fetchAlerts();
+    showToast(`${deleted} medicine(s) deleted`);
+    setLoading(false);
+  };
+
+  const handleBulkEdit = () => {
+    if (selectedIds.size === 0) return;
+    const first = filteredMedicines.find((m) => selectedIds.has(m._id));
+    if (first) createEditDraftAndNavigate(first);
+  };
 
   const categories = useMemo(() => ["All", ...catalogMainCategories], []);
 
@@ -1855,6 +1897,31 @@ export default function Medicines({
         </div>
       </div>
 
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && activeTab !== 'pending' && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-purple-50 border border-purple-200 rounded-xl">
+          <span className="text-sm font-semibold text-purple-700">{selectedIds.size} selected</span>
+          <button
+            onClick={handleBulkEdit}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
+          >
+            <FiEdit2 className="w-3.5 h-3.5" /> Edit First Selected
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium"
+          >
+            <FiTrash2 className="w-3.5 h-3.5" /> Delete Selected
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="ml-auto text-xs text-slate-500 hover:text-slate-700 underline"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -2056,6 +2123,14 @@ export default function Medicines({
               <table className="w-full">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="px-3 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                        checked={filteredMedicines.slice((currentPage-1)*itemsPerPage, currentPage*itemsPerPage).length > 0 && filteredMedicines.slice((currentPage-1)*itemsPerPage, currentPage*itemsPerPage).every(m => selectedIds.has(m._id))}
+                        onChange={() => toggleSelectAll(filteredMedicines.slice((currentPage-1)*itemsPerPage, currentPage*itemsPerPage))}
+                      />
+                    </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
                       Medicine
                     </th>
@@ -2095,7 +2170,15 @@ export default function Medicines({
                       currentPage * itemsPerPage,
                     )
                     .map((medicine) => (
-                      <tr key={medicine._id} className="hover:bg-slate-50">
+                      <tr key={medicine._id} className={`hover:bg-slate-50 ${selectedIds.has(medicine._id) ? 'bg-purple-50' : ''}`}>
+                        <td className="px-3 py-4">
+                          <input
+                            type="checkbox"
+                            className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                            checked={selectedIds.has(medicine._id)}
+                            onChange={() => toggleSelectOne(medicine._id)}
+                          />
+                        </td>
                         <td className="px-6 py-4">
                           <div>
                             <p className="font-medium text-slate-800">
@@ -2199,9 +2282,17 @@ export default function Medicines({
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => createEditDraftAndNavigate(medicine)}
+                              title="Edit medicine"
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                            >
+                              <FiEdit2 className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => openDeleteModal(medicine)}
+                              title="Delete medicine"
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
                             >
                               <FiTrash2 className="w-4 h-4" />
