@@ -594,8 +594,13 @@ export default function SalesHistory() {
                       {/* Dues column */}
                       <td className="px-4 py-2 whitespace-nowrap">
                         {isCredit ? (
-                          <div className="text-sm font-black text-red-600">
-                            PKR {Number(sale.customerTotalDue || (sale.totalAmount - (sale.receivedAmount || 0))).toFixed(2)}
+                          <div className="space-y-0.5">
+                            <div className="text-xs text-green-600 font-medium">
+                              Rcvd: PKR {Number(sale.receivedAmount || 0).toFixed(2)}
+                            </div>
+                            <div className="text-sm font-black text-red-600">
+                              Due: PKR {Number(sale.balanceDue ?? Math.max(0, (sale.totalAmount || 0) - (sale.receivedAmount || 0))).toFixed(2)}
+                            </div>
                           </div>
                         ) : (
                           <span className="text-gray-400">—</span>
@@ -826,10 +831,28 @@ export default function SalesHistory() {
                           <span className="font-medium">PKR {Number(selectedSale.sale.paymentCharge).toFixed(2)}</span>
                         </div>
                       )}
+                      {Number(selectedSale.sale.previousDue) > 0 && (
+                        <div className="flex justify-between text-amber-600">
+                          <span>Previous Due:</span>
+                          <span className="font-medium">PKR {Number(selectedSale.sale.previousDue).toFixed(2)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between border-t pt-2 font-bold text-base">
                         <span>Total Amount:</span>
                         <span>PKR {Number(selectedSale.sale.totalAmount || 0).toFixed(2)}</span>
                       </div>
+                      {selectedSale.sale.paymentMethod === 'Credit' && (
+                        <>
+                          <div className="flex justify-between text-green-600">
+                            <span>Amount Received:</span>
+                            <span className="font-medium">PKR {Number(selectedSale.sale.receivedAmount || 0).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between border-t pt-2 font-bold text-red-600 text-base">
+                            <span>Balance Due:</span>
+                            <span>PKR {Number(selectedSale.sale.balanceDue ?? Math.max(0, (selectedSale.sale.totalAmount || 0) - (selectedSale.sale.receivedAmount || 0))).toFixed(2)}</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

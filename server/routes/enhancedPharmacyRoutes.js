@@ -467,6 +467,53 @@ router.post('/sales', dayGuard('pharmacy'), async (req, res) => {
     
     await sale.save();
 
+    // Auto-update credit customer totalDue whenever a credit sale is saved
+    if (sale.paymentMethod === 'Credit') {
+      try {
+        const saleNewAmt = Math.max(0, (sale.totalAmount || 0) - (sale.previousDue || 0)); // net new sale (exclude rolled-in prev due)
+        const amtReceived = Number(sale.receivedAmount) || 0;
+
+        let creditCustomer = null;
+        if (sale.creditCustomerId) {
+          creditCustomer = await PharmacyCreditCustomer.findById(sale.creditCustomerId);
+        }
+        if (!creditCustomer) {
+          // fallback: match by phone, CNIC, or name
+          const orConds = [];
+          if (sale.customerCnic)    orConds.push({ cnic: sale.customerCnic });
+          if (sale.customerContact) orConds.push({ phone: sale.customerContact });
+          if (sale.customerName)    orConds.push({ name: sale.customerName });
+          if (orConds.length)       creditCustomer = await PharmacyCreditCustomer.findOne({ $or: orConds });
+        }
+        if (!creditCustomer && sale.customerName) {
+          // Auto-create a credit customer record so they appear in the Credit Customers page
+          creditCustomer = new PharmacyCreditCustomer({
+            name: sale.customerName,
+            phone: sale.customerContact || '',
+            cnic: sale.customerCnic || '',
+            address: sale.customerAddress || '',
+            totalDue: 0,
+            totalPaid: 0,
+          });
+          await creditCustomer.save();
+        }
+        if (creditCustomer) {
+          const newDue  = Math.max(0, (creditCustomer.totalDue  || 0) + saleNewAmt - amtReceived);
+          const newPaid = (creditCustomer.totalPaid || 0) + amtReceived;
+          creditCustomer.totalDue  = newDue;
+          creditCustomer.totalPaid = newPaid;
+          // also stamp creditCustomerId back onto sale if it was resolved via fallback
+          if (!sale.creditCustomerId) {
+            sale.creditCustomerId = creditCustomer._id;
+            await sale.save();
+          }
+          await creditCustomer.save();
+        }
+      } catch (e) {
+        console.warn('Credit customer due update failed:', e?.message || e);
+      }
+    }
+
     // Create Receivable if there is a due portion
     try {
       const totalAmount = Number(sale.totalAmount || 0);
@@ -999,14 +1046,15 @@ router.get('/credit-customers/:id/sales', async (req, res) => {
     const customer = await PharmacyCreditCustomer.findById(req.params.id);
     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
 
-    // Find all sales where paymentMethod='Credit' and customer matches by CNIC or phone
+    // Build match conditions: creditCustomerId (direct) OR legacy CNIC/phone/name match
+    const orConditions = [{ creditCustomerId: customer._id }];
+    if (customer.cnic)  orConditions.push({ customerCnic: customer.cnic });
+    if (customer.phone) orConditions.push({ customerContact: customer.phone });
+    orConditions.push({ customerName: customer.name });
+
     const sales = await PharmacySale.find({
       paymentMethod: 'Credit',
-      $or: [
-        { customerCnic: customer.cnic },
-        { customerContact: customer.phone },
-        { customerName: customer.name },
-      ],
+      $or: orConditions,
     }).sort({ createdAt: -1 }).lean();
 
     // Map to receipt format

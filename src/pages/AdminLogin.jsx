@@ -35,13 +35,6 @@ export default function AdminLogin() {
         
         // Check if user has admin role
         if (userRole === 'admin') {
-          // Check if user has admin portal access
-          const hasPortalAccess = user.portalAccess?.map(p => p.toLowerCase()).includes('admin')
-          if (!hasPortalAccess) {
-            setError('Access denied. You do not have permission to access the Admin Portal. Contact your administrator.')
-            return
-          }
-          
           localStorage.setItem('portal', 'admin')
           localStorage.setItem('admin_auth', JSON.stringify({ 
             username: user.username,

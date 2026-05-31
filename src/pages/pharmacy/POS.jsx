@@ -1,8 +1,10 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
-import { FiSearch, FiPlus, FiMinus, FiTrash2, FiPrinter, FiShoppingCart, FiX, FiGrid, FiList, FiEyeOff, FiMaximize2 } from 'react-icons/fi';
+import { useNavigate } from 'react-router-dom';
+import { FiSearch, FiPlus, FiMinus, FiTrash2, FiPrinter, FiShoppingCart, FiX, FiGrid, FiList, FiEyeOff, FiMaximize2, FiExternalLink } from 'react-icons/fi';
 import { pharmacyMedicinesAPI, pharmacySalesAPI, settingsAPI, pharmacyDuesAPI, petsAPI, prescriptionsAPI, pharmacyCreditCustomersAPI, holdBillsAPI, pharmacySettingsAPI } from '../../services/api';
 
 export default function PharmacyPOS({ apis } = {}) {
+  const navigate = useNavigate();
   const medicinesAPI = apis?.medicines || pharmacyMedicinesAPI;
   const salesAPI = apis?.sales || pharmacySalesAPI;
   const duesAPI = apis?.dues || pharmacyDuesAPI;
@@ -489,6 +491,7 @@ export default function PharmacyPOS({ apis } = {}) {
 
   const selectCreditCustomer = (customer) => {
     setSelectedCreditCustomer(customer);
+    setPreviousDue(Number(customer.totalDue) || 0);
     setCustomerInfo(prev => ({
       ...prev,
       customerName: customer.name || '',
@@ -502,6 +505,7 @@ export default function PharmacyPOS({ apis } = {}) {
 
   const clearCreditCustomer = () => {
     setSelectedCreditCustomer(null);
+    setPreviousDue(0);
     setCustomerInfo(prev => ({
       ...prev,
       customerName: '',
@@ -701,9 +705,10 @@ export default function PharmacyPOS({ apis } = {}) {
         discount: lineDiscounts + effectiveBillDiscount,
         previousDue,
         totalAmount: payableTotal,
-        receivedAmount: Number(receivedAmount) || payableTotal,
+        creditCustomerId: paymentTab === 'Credit' && selectedCreditCustomer ? selectedCreditCustomer._id : undefined,
+        receivedAmount: paymentTab === 'Credit' ? (Number(receivedAmount) || 0) : (Number(receivedAmount) || payableTotal),
         paymentMethod: paymentTab === 'Credit' ? 'Credit' : paymentMethod,
-        balanceDue: Math.max(0, payableTotal - (Number(receivedAmount) || payableTotal))
+        balanceDue: paymentTab === 'Credit' ? Math.max(0, payableTotal - (Number(receivedAmount) || 0)) : 0
       };
 
       const response = await salesAPI.create(saleData);
@@ -732,21 +737,6 @@ export default function PharmacyPOS({ apis } = {}) {
         } catch (err) {
           console.error('Error deleting held bill after checkout:', err);
         }
-      }
-
-      // If credit sale, update the credit customer's totalDue
-      if (paymentTab === 'Credit' && selectedCreditCustomer) {
-        const amtReceived = Number(receivedAmount) || 0;
-        const newDue = Math.max(0, (selectedCreditCustomer.totalDue || 0) + payableTotal - amtReceived);
-        const newPaid = (selectedCreditCustomer.totalPaid || 0) + amtReceived;
-        await creditCustomersAPI.update(selectedCreditCustomer._id, {
-          name: selectedCreditCustomer.name,
-          phone: selectedCreditCustomer.phone,
-          cnic: selectedCreditCustomer.cnic,
-          address: selectedCreditCustomer.address,
-          totalDue: newDue,
-          totalPaid: newPaid,
-        });
       }
 
       setShowPaymentModal(false);
@@ -1620,10 +1610,18 @@ export default function PharmacyPOS({ apis } = {}) {
               </div>
             </div>
 
-            <div className="p-4 bg-slate-50 flex gap-2">
+            <div className="p-4 bg-slate-50 flex gap-2 flex-wrap">
               <button onClick={printReceipt} className="flex-1 py-2 bg-slate-800 text-white rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-slate-900 transition-colors">
                 <FiPrinter className="w-4 h-4" /> Print
               </button>
+              {lastSale?.paymentMethod === 'Credit' && lastSale?.creditCustomerId && (
+                <button
+                  onClick={() => { setShowReceipt(false); navigate('/pharmacy/credit-customers'); }}
+                  className="flex-1 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  <FiExternalLink className="w-4 h-4" /> Visit Profile
+                </button>
+              )}
               <button onClick={() => setShowReceipt(false)} className="flex-1 py-2 border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-white transition-colors">
                 Close
               </button>

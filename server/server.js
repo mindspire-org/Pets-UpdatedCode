@@ -80,6 +80,7 @@ connectDB();
     const username = (process.env.ADMIN_USERNAME || "admin").trim();
     const password = (process.env.ADMIN_PASSWORD || "admin123").trim();
     let admin = await User.findOne({ username });
+    const allPortals = ["admin", "reception", "doctor", "lab", "pharmacy", "shop"];
     if (!admin) {
       admin = new User({
         username,
@@ -88,6 +89,7 @@ connectDB();
         name: "Admin User",
         email: "admin@petshospital.com",
         isActive: true,
+        portalAccess: allPortals,
       });
       await admin.save();
       console.log(`✅ Default admin created: ${username}`);
@@ -103,6 +105,10 @@ connectDB();
       }
       if (admin.role !== "admin") {
         admin.role = "admin";
+        updated = true;
+      }
+      if (!admin.portalAccess || admin.portalAccess.length === 0) {
+        admin.portalAccess = allPortals;
         updated = true;
       }
       if (updated) {

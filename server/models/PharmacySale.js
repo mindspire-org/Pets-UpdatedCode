@@ -74,7 +74,9 @@ const pharmacySaleSchema = new mongoose.Schema({
     min: 0
   },
   // Payment breakdown (optional, for dues tracking)
+  creditCustomerId: { type: mongoose.Schema.Types.ObjectId, ref: 'PharmacyCreditCustomer' },
   receivedAmount: { type: Number, min: 0 },
+  balanceDue: { type: Number, default: 0, min: 0 },
   previousDue: { type: Number, min: 0 },
   dueAmount: { type: Number, min: 0 },
   newTotalDue: { type: Number, min: 0 },
@@ -143,6 +145,7 @@ pharmacySaleSchema.index({ invoiceNumber: 1 });
 pharmacySaleSchema.index({ createdAt: -1 });
 pharmacySaleSchema.index({ prescriptionId: 1 });
 pharmacySaleSchema.index({ customerContact: 1 });
+pharmacySaleSchema.index({ creditCustomerId: 1 });
 
 const PharmacySale = mongoose.model('PharmacySale', pharmacySaleSchema);
 

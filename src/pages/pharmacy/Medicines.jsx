@@ -1630,7 +1630,7 @@ export default function Medicines({
           const direct = await medicinesAPI.findByBarcode(barcode);
           const med = direct?.data || (direct && direct.success && direct.data);
           if (med && med._id) return med;
-        } catch {}
+        } catch (e) { if (e?.status !== 404) console.warn("findByBarcode error:", e?.message); }
         try {
           const res = await medicinesAPI.search(barcode);
           const list = Array.isArray(res?.data)
@@ -1693,7 +1693,7 @@ export default function Medicines({
       };
       let created = 0,
         updated = 0,
-        erroPKR = 0;
+        errors = 0;
       const toNum = (v, d = 0) => {
         if (typeof v === "number") return isFinite(v) ? v : d;
         if (!v) return d;
@@ -1726,7 +1726,7 @@ export default function Medicines({
           remainingMl: toNum(row.RemainingML ?? row["Remaining ML"], 0),
           purchasePrice: toNum(row.PurchasePrice ?? row["Purchase Price"], 0),
           salePrice: toNum(row.SalePrice ?? row["Sale Price"], 0),
-          supplierName: row.Supplier || row["Supplier Name"] || "",
+          supplierName: row.Supplier || row["Supplier Name"] || "Unknown",
           purchaseDate: parseDate(
             row.PurchaseDate || row["Purchase Date"] || "",
           ),
@@ -1755,7 +1755,7 @@ export default function Medicines({
       }
       await fetchMedicines();
       showToast(
-        `Import complete: ${created} created, ${updated} updated${erroPKR ? `, ${errors} failed` : ""}`,
+        `Import complete: ${created} created, ${updated} updated${errors ? `, ${errors} failed` : ""}`,
       );
     } catch (err) {
       console.error("Import error:", err);

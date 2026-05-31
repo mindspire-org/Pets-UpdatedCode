@@ -61,6 +61,25 @@ const apiCall = async (endpoint, method = "GET", body = null) => {
   }
 };
 
+// Silent variant — same as apiCall but suppresses console noise for 404s (expected "not found" probes)
+const silentApiCall = async (endpoint, method = "GET", body = null) => {
+  try {
+    return await requestFromBase(API_BASE_URL, endpoint, method, body);
+  } catch (error) {
+    const canFallback = API_BASE_URL !== DEFAULT_API_BASE_URL;
+    if (canFallback) {
+      try {
+        return await requestFromBase(DEFAULT_API_BASE_URL, endpoint, method, body);
+      } catch (fallbackError) {
+        if (fallbackError?.status !== 404) console.error(`API fallback error [${endpoint}]:`, fallbackError);
+        throw fallbackError;
+      }
+    }
+    if (error?.status !== 404) console.error(`API Error [${endpoint}]:`, error);
+    throw error;
+  }
+};
+
 // Users API
 export const usersAPI = {
   getAll: () => apiCall("/users"),
@@ -332,7 +351,7 @@ export const pharmacyMedicinesAPI = {
   getById: (id) => apiCall(`/pharmacy/medicines/${id}`),
   search: (query) => apiCall(`/pharmacy/medicines/search/${query}`),
   findByBarcode: (barcode) =>
-    apiCall(`/pharmacy/medicines/find-by-barcode/${barcode}`),
+    silentApiCall(`/pharmacy/medicines/find-by-barcode/${barcode}`),
   getLowStock: () => apiCall("/pharmacy/medicines/alerts/low-stock"),
   getExpiring: () => apiCall("/pharmacy/medicines/alerts/expiring"),
   getExpired: () => apiCall("/pharmacy/medicines/alerts/expired"),
@@ -1119,7 +1138,7 @@ export const petshopPharmacyMedicinesAPI = {
   getExpiring: () => apiCall("/petshop/medicines/alerts/expiring"),
   getExpired: () => apiCall("/petshop/medicines/alerts/expired"),
   search: (query) => apiCall(`/petshop/medicines/search/${encodeURIComponent(query)}`),
-  findByBarcode: (barcode) => apiCall(`/petshop/medicines/find-by-barcode/${encodeURIComponent(barcode)}`),
+  findByBarcode: (barcode) => silentApiCall(`/petshop/medicines/find-by-barcode/${encodeURIComponent(barcode)}`),
 };
 
 // Petshop Pharmacy Sales API
