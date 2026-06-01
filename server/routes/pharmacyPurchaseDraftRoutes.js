@@ -35,7 +35,7 @@ async function createPurchaseRowForItem(item, draft, itemIndex) {
     mainCategory:    item.mainCategory || "",
     subCategory:     item.subCategory  || "",
     category:        item.subCategory  || item.mainCategory || "",
-    expiryDate:      item.expiryDate ? new Date(item.expiryDate) : undefined,
+    expiryDate:      item.expiryDate ? new Date(item.expiryDate) : new Date(),
     unit:            item.unit         || "pieces",
     containerType:   item.containerType || "",
     qtyPacks:        item.qtyPacks     || 0,
@@ -141,11 +141,10 @@ async function createMedicineFromItem(item, draft) {
   }
 
   // No existing record — insert fresh
-  const med = new PharmacyMedicine({
+  // Omit empty barcode/batchNo so sparse unique indexes skip them
+  const medPayload = {
     medicineName:  item.medicineName,
     genericName:   item.genericName  || "",
-    batchNo,
-    barcode,
     mainCategory:  item.mainCategory || "",
     subCategory:   item.subCategory  || "",
     category:      item.subCategory  || item.mainCategory || "",
@@ -157,7 +156,7 @@ async function createMedicineFromItem(item, draft) {
     salePrice:     incomingSale,
     minSalePrice:  0,
     supplierName:  draft.supplierName || "",
-    purchaseDate:  draft.invoiceDate,
+    purchaseDate:  draft.invoiceDate || new Date(),
     invoiceNo:     draft.invoiceNo    || "",
     invoiceDate:   draft.invoiceDate,
     lowStockThreshold: item.minStock  || 0,
@@ -170,7 +169,11 @@ async function createMedicineFromItem(item, draft) {
     buyPerPack:    item.buyPerPack    || 0,
     salePerPack:   item.salePerPack   || 0,
     isActive:      true,
-  });
+  };
+  if (barcode) medPayload.barcode = barcode;
+  if (batchNo) medPayload.batchNo = batchNo;
+
+  const med = new PharmacyMedicine(medPayload);
   await med.save();
   return med;
 }

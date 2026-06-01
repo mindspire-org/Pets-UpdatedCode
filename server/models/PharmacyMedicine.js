@@ -74,7 +74,7 @@ const pharmacyMedicineSchema = new mongoose.Schema({
   barcode: {
     type: String,
     trim: true,
-    required: true
+    default: ''
   },
   lowStockThreshold: {
     type: Number,

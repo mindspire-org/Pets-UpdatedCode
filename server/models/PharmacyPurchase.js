@@ -7,9 +7,9 @@ const purchaseItemSchema = new mongoose.Schema({
   barcode:         { type: String, trim: true, default: '' },
   mainCategory:    { type: String, trim: true, default: '' },
   subCategory:     { type: String, trim: true, default: '' },
-  category:        { type: String, required: true },
-  expiryDate:      { type: Date, required: true },
-  unit:            { type: String, required: true },
+  category:        { type: String, trim: true, default: '' },
+  expiryDate:      { type: Date },
+  unit:            { type: String, default: 'pieces' },
   containerType:   { type: String, default: '' },
 
   // Pack-level quantities & pricing (from AddInvoice)
