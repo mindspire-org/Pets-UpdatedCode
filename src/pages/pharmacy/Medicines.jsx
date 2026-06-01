@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import DatePicker from "react-datepicker";
 import {
   FiPlus,
   FiEdit2,
@@ -1636,7 +1637,42 @@ export default function Medicines({
     try {
       if (!val) return "";
       if (val instanceof Date) return val.toISOString().split("T")[0];
-      const d = new Date(val);
+
+      // Excel serial dates are numbers (days since 1899-12-30).
+      // new Date(45000) would give 1970 (ms), so convert explicitly.
+      if (typeof val === "number" && val > 1 && val < 60000) {
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+        const days = val < 61 ? val : val - 1; // Excel 1900 leap-year bug
+        const d = new Date(excelEpoch.getTime() + days * 86400000);
+        return d.toISOString().split("T")[0];
+      }
+
+      const str = String(val).trim();
+      if (!str) return "";
+
+      // Try common formats: DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD
+      const separators = /[\-\/\.]/;
+      if (separators.test(str)) {
+        const parts = str.split(separators);
+        if (parts.length === 3) {
+          const nums = parts.map((p) => parseInt(p, 10));
+          // If first part > 31, assume YYYY-MM-DD
+          if (nums[0] > 31) {
+            const d = new Date(nums[0], nums[1] - 1, nums[2]);
+            if (!isNaN(d)) return d.toISOString().split("T")[0];
+          }
+          // If middle part > 12, assume DD-MM-YYYY
+          if (nums[1] > 12) {
+            const d = new Date(nums[2], nums[1] - 1, nums[0]);
+            if (!isNaN(d)) return d.toISOString().split("T")[0];
+          }
+          // Otherwise prefer DD/MM/YYYY (common outside US)
+          const d1 = new Date(nums[2], nums[1] - 1, nums[0]);
+          if (!isNaN(d1)) return d1.toISOString().split("T")[0];
+        }
+      }
+
+      const d = new Date(str);
       if (!isNaN(d)) return d.toISOString().split("T")[0];
       return "";
     } catch {
@@ -1653,7 +1689,7 @@ export default function Medicines({
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+      const json = XLSX.utils.sheet_to_json(ws, { defval: "", cellDates: true });
 
       const toNum = (v, d = 0) => {
         if (typeof v === "number") return isFinite(v) ? v : d;
@@ -1951,9 +1987,12 @@ export default function Medicines({
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {(() => {
-                    // Flatten all items, then paginate
-                    const allFlatItems = filteredDrafts.flatMap((draft) =>
-                      (draft.items || []).map((item, idx) => ({
+                    // Flatten only pending items, then paginate
+                    const allFlatItems = filteredDrafts.flatMap((draft) => {
+                      const pendingItems = (draft.items || []).filter(
+                        (item) => (item.itemStatus || "pending") === "pending"
+                      );
+                      return pendingItems.map((item, idx) => ({
                         ...item,
                         _itemId:      item._id,
                         draftId:      draft._id,
@@ -1966,8 +2005,8 @@ export default function Medicines({
                         itemCount:    draft.items.length,
                         isFirstItem:  idx === 0,
                         draftStatus:  draft.status,
-                      }))
-                    );
+                      }));
+                    });
 
                     const start = (currentPage - 1) * itemsPerPage;
                     return allFlatItems
@@ -2480,12 +2519,13 @@ export default function Medicines({
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       Invoice Date *
                     </label>
-                    <input
-                      type="date"
-                      required
-                      value={formData.invoiceDate}
-                      onChange={(e) => setFormData({ ...formData, invoiceDate: e.target.value })}
+                    <DatePicker
+                      selected={formData.invoiceDate ? new Date(formData.invoiceDate + "T00:00:00") : null}
+                      onChange={(date) => setFormData({ ...formData, invoiceDate: date ? date.toISOString().split("T")[0] : "" })}
+                      dateFormat="dd/MM/yyyy"
+                      placeholderText="DD/MM/YYYY"
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm"
+                      wrapperClassName="w-full"
                     />
                   </div>
                 </div>
@@ -2677,9 +2717,14 @@ export default function Medicines({
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Expiry Date</label>
-                            <input type="date" value={item.expiryDate}
-                              onChange={(e) => updateItem({ expiryDate: e.target.value })}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white" />
+                            <DatePicker
+                              selected={item.expiryDate ? new Date(item.expiryDate + "T00:00:00") : null}
+                              onChange={(date) => updateItem({ expiryDate: date ? date.toISOString().split("T")[0] : "" })}
+                              dateFormat="dd/MM/yyyy"
+                              placeholderText="DD/MM/YYYY"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+                              wrapperClassName="w-full"
+                            />
                           </div>
                           <div>
                             <label className="block text-xs font-medium text-slate-600 mb-1">Qty (Packs) *</label>

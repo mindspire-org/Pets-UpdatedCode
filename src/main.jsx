@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { createHashRouter, RouterProvider } from "react-router-dom";
 import App from "./App";
 import "./style.css";
+import "react-datepicker/dist/react-datepicker.css";
 import { SettingsProvider } from "./context/SettingsContext";
 import { ActivityProvider } from "./context/ActivityContext";
 import { AlertProvider } from "./context/AlertContext";

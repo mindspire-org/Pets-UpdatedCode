@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import DatePicker from "react-datepicker";
 import {
   FiPlus,
   FiEdit2,
@@ -1077,9 +1078,14 @@ export default function AddInvoice() {
             {/* Invoice Date */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Invoice Date *</label>
-              <input type="date" required value={formData.invoiceDate}
-                onChange={(e) => setFormData((p) => ({ ...p, invoiceDate: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm" />
+              <DatePicker
+                selected={formData.invoiceDate ? new Date(formData.invoiceDate + "T00:00:00") : null}
+                onChange={(date) => setFormData((p) => ({ ...p, invoiceDate: date ? date.toISOString().split("T")[0] : "" }))}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="DD/MM/YYYY"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-sm"
+                wrapperClassName="w-full"
+              />
             </div>
           </div>
         </div>
@@ -1875,9 +1881,14 @@ function InvoiceItemCard({ item, idx, canRemove, onUpdate, onRemove, onAddMainCa
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Expiry Date</label>
-              <input type="date" value={item.expiryDate}
-                onChange={(e) => onUpdate({ expiryDate: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm" />
+              <DatePicker
+                selected={item.expiryDate ? new Date(item.expiryDate + "T00:00:00") : null}
+                onChange={(date) => onUpdate({ expiryDate: date ? date.toISOString().split("T")[0] : "" })}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="DD/MM/YYYY"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                wrapperClassName="w-full"
+              />
             </div>
             {[
               { label: "Qty (Packs) *", key: "qtyPacks", required: true },
