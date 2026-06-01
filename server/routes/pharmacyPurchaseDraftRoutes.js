@@ -173,9 +173,15 @@ async function createMedicineFromItem(item, draft) {
   if (barcode) medPayload.barcode = barcode;
   if (batchNo) medPayload.batchNo = batchNo;
 
-  const med = new PharmacyMedicine(medPayload);
-  await med.save();
-  return med;
+  try {
+    const med = new PharmacyMedicine(medPayload);
+    await med.save();
+    return med;
+  } catch (err) {
+    console.error("[createMedicineFromItem] SAVE FAILED:", err.message);
+    console.error("[createMedicineFromItem] Payload keys:", Object.keys(medPayload));
+    throw err;
+  }
 }
 
 // ── GET stats (must be before /:id to avoid being matched as an id) ─────────
@@ -359,6 +365,7 @@ router.post("/:draftId/items/:itemId/approve", async (req, res) => {
     await draft.save();
     res.json({ success: true, data: draft, message: `Item approved and added to inventory` });
   } catch (err) {
+    console.error("[approve item] UNHANDLED ERROR:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 });

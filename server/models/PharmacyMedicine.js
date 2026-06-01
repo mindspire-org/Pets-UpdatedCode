@@ -24,8 +24,8 @@ const pharmacyMedicineSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    required: true,
-    trim: true
+    trim: true,
+    default: ''
   },
   expiryDate: {
     type: Date,
@@ -57,8 +57,8 @@ const pharmacyMedicineSchema = new mongoose.Schema({
   },
   supplierName: {
     type: String,
-    required: true,
-    trim: true
+    trim: true,
+    default: ''
   },
   purchaseDate: {
     type: Date,
@@ -136,7 +136,7 @@ const pharmacyMedicineSchema = new mongoose.Schema({
 });
 
 // Compound index for medicine name and batch number (each batch is unique when provided)
-pharmacyMedicineSchema.index({ medicineName: 1, batchNo: 1 }, { unique: true, sparse: true });
+pharmacyMedicineSchema.index({ medicineName: 1, batchNo: 1 }, { sparse: true });
 pharmacyMedicineSchema.index({ category: 1 });
 pharmacyMedicineSchema.index({ mainCategory: 1 });
 pharmacyMedicineSchema.index({ subCategory: 1 });
