@@ -231,16 +231,30 @@ router.post('/medicines/bulk-upsert', async (req, res) => {
     let created = 0, updated = 0, errors = 0;
     const errorList = [];
 
+    // Normalize helper
+    const normalize = (v) => String(v || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
+
+    // Auto-generate deterministic barcode if missing, using normalized medicine name
+    const rowsWithBarcodes = rows.map(r => {
+      const row = { ...r };
+      const barcode = String(row.barcode || '').trim();
+      const medicineName = String(row.medicineName || '').trim();
+      if (!barcode && medicineName) {
+        row.barcode = `AUTO-${normalize(medicineName).toUpperCase()}`;
+      }
+      return row;
+    });
+
     // Fetch all existing barcodes in one query
-    const barcodes = rows.map(r => String(r.barcode || '').trim()).filter(Boolean);
+    const barcodes = rowsWithBarcodes.map(r => String(r.barcode || '').trim()).filter(Boolean);
     const existing = await PharmacyMedicine.find({ barcode: { $in: barcodes } }).lean();
     const existingMap = new Map(existing.map(m => [String(m.barcode).trim().toLowerCase(), m]));
 
     const bulkOps = [];
-    for (const row of rows) {
+    for (const row of rowsWithBarcodes) {
       try {
         const barcode = String(row.barcode || '').trim();
-        if (!barcode) { errors++; errorList.push('Row missing barcode'); continue; }
+        if (!barcode) { errors++; errorList.push('Row missing barcode and medicineName'); continue; }
 
         const payload = { ...row };
         // Injection remainingMl auto-calc

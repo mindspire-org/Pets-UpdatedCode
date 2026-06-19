@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import PetshopPharmacyMedicine from '../models/PetshopPharmacyMedicine.js';
 import PetshopPharmacySale from '../models/PetshopPharmacySale.js';
 import PetshopPharmacyPurchase from '../models/PetshopPharmacyPurchase.js';
@@ -233,21 +234,27 @@ router.get('/sales/:id', async (req, res) => {
 });
 
 router.post('/sales', async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const { items, ...saleData } = req.body;
 
     for (const item of items) {
       const quantity = parseFloat(item.quantity);
       if (isNaN(quantity) || quantity <= 0) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           success: false,
           message: `Invalid quantity for ${item.medicineName}`
         });
       }
 
-      const medicine = await PetshopPharmacyMedicine.findById(item.medicineId);
+      const medicine = await PetshopPharmacyMedicine.findById(item.medicineId).session(session);
 
       if (!medicine) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(404).json({
           success: false,
           message: `Medicine ${item.medicineName} not found`
@@ -255,6 +262,8 @@ router.post('/sales', async (req, res) => {
       }
 
       if (medicine.quantity < quantity) {
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           success: false,
           message: `Insufficient stock for ${medicine.medicineName}. Available: ${medicine.quantity}`
@@ -277,12 +286,16 @@ router.post('/sales', async (req, res) => {
         }
       }
 
-      await medicine.save();
+      await medicine.save({ session });
     }
 
     const sale = new PetshopPharmacySale({ items, ...saleData });
-    await sale.save();
+    await sale.save({ session });
 
+    await session.commitTransaction();
+    session.endSession();
+
+    // Post-commit side effects (non-critical)
     try {
       await PetshopNotification.create({
         portal: "shop",
@@ -315,6 +328,8 @@ router.post('/sales', async (req, res) => {
 
     res.status(201).json({ success: true, data: sale });
   } catch (error) {
+    await session.abortTransaction().catch(() => {});
+    session.endSession();
     res.status(500).json({ success: false, message: error.message });
   }
 });

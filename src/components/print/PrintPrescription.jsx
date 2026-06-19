@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 
 export default function PrintPrescription({
   doc,
@@ -8,8 +8,16 @@ export default function PrintPrescription({
   fallbackPatient,
   onClose,
   onAfterPrint,
+  autoPrint = false,
 }){
   const [isPrinting, setIsPrinting] = useState(false)
+
+  useEffect(() => {
+    if (autoPrint && !isPrinting) {
+      const t = setTimeout(() => handlePrint(), 400)
+      return () => clearTimeout(t)
+    }
+  }, [autoPrint])
   const normalizeKey = (v) => String(v || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '')
   const isVaccineItem = (it) => {
     if (!it) return false
@@ -261,6 +269,8 @@ export default function PrintPrescription({
                 <div class="font-semibold" style="margin-top:4px;">${(function(){ try{ const profile = JSON.parse(localStorage.getItem('doctor_profile')||'{}'); return esc(profile?.name || (p0.doctor?.name || p0.doctor?.username || 'Doctor')) }catch(e){return esc(p0.doctor?.name || p0.doctor?.username || 'Doctor')} })()}</div>
                 <div style="font-size:11px;color:#000">Companion Animal Veterinarian</div>
                 <div style="font-size:11px;color:#000">${esc(settings?.companyName || 'Pets Hospital')}</div>
+                ${settings?.address ? `<div style="font-size:10px;color:#000;margin-top:2px;">${esc(settings.address)}</div>` : ''}
+                ${settings?.phone ? `<div style="font-size:10px;color:#000;">${esc(settings.phone)}</div>` : ''}
               </div>
             </div>
           </div>
@@ -595,6 +605,8 @@ export default function PrintPrescription({
                   <div className="mt-1 text-slate-800 font-semibold">{(function(){ try{ const profile = JSON.parse(localStorage.getItem('doctor_profile')||'{}'); return profile?.name || (p.doctor?.name || p.doctor?.username || 'Doctor') }catch(e){return (p.doctor?.name || p.doctor?.username || 'Doctor')} })()}</div>
                   <div className="text-xs text-slate-600">Companion Animal Veterinarian</div>
                   <div className="text-xs text-slate-500">{settings?.companyName || 'Pets Hospital'}</div>
+                  {settings?.address && <div className="text-xs text-slate-500 mt-1">{settings.address}</div>}
+                  {settings?.phone && <div className="text-xs text-slate-500">{settings.phone}</div>}
                 </div>
               </div>
             </div>
