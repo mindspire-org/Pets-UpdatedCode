@@ -943,11 +943,13 @@ export default function ReceptionProcedures() {
 
     const detailsTableHTML = (
       '<table>'+
+        '<tr><td style="border:1px solid #000;padding:3px">Invoice #</td><td style="border:1px solid #000;padding:3px">'+ (data.invoiceNumber||'N/A') +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Patient ID</td><td style="border:1px solid #000;padding:3px">'+ (data.petId||'N/A') +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Client ID</td><td style="border:1px solid #000;padding:3px">'+ (data.clientId||'N/A') +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Owner</td><td style="border:1px solid #000;padding:3px">'+ (data.ownerName||'') +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Pet</td><td style="border:1px solid #000;padding:3px">'+ (data.petName||'') +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Contact</td><td style="border:1px solid #000;padding:3px">'+ (data.contact||'') +'</td></tr>'+
+        '<tr><td style="border:1px solid #000;padding:3px">Method</td><td style="border:1px solid #000;padding:3px">'+ (data.paymentMethod||'Cash') +'</td></tr>'+
         '<tr><td style="border:1px solid #000;padding:3px">Date</td><td style="border:1px solid #000;padding:3px">'+ new Date().toLocaleDateString() +'</td></tr>'+
       '</table>'
     );
@@ -1458,7 +1460,7 @@ export default function ReceptionProcedures() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl shadow-xl w-[400px] max-w-full p-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="font-semibold">Receipt Preview</div>
+              <div className="font-semibold">Receipt Preview {receiptData?.invoiceNumber ? `(${receiptData.invoiceNumber})` : ''}</div>
               <button onClick={() => setShowReceiptModal(false)} className="text-slate-500 hover:text-slate-700"><FiX /></button>
             </div>
             <div className="border border-slate-300 p-2 overflow-auto max-h-[70vh]">

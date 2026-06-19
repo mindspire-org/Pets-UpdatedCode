@@ -20,6 +20,7 @@ export default function DoctorPrescription(){
   const [draftLoaded, setDraftLoaded] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [autoPrintPreview, setAutoPrintPreview] = useState(false)
   const [signature, setSignature] = useState('')
   const [previewPatient, setPreviewPatient] = useState(null)
   const [resetOnClose, setResetOnClose] = useState(false)
@@ -921,6 +922,7 @@ export default function DoctorPrescription(){
       doctor: JSON.parse(localStorage.getItem('doctor_auth') || '{}')
     }
     await save()
+    setAutoPrintPreview(true)
     openPreview(doc)
   }
 
@@ -1935,6 +1937,20 @@ export default function DoctorPrescription(){
             </div>
           </div>
         </div>
+      )}
+
+      {/* Print Preview */}
+      {(showPreview && preview) && (
+        <PrintPrescription
+          doc={preview}
+          settings={settings}
+          signature={signature}
+          fallbackNotes={preview?.notes}
+          fallbackPatient={preview?.patient}
+          autoPrint={autoPrintPreview}
+          onClose={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false) }}
+          onAfterPrint={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false) }}
+        />
       )}
 
       {/* Referral Success Modal */}

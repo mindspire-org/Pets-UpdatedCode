@@ -138,6 +138,22 @@ petshopPharmacySaleSchema.index({ createdAt: -1 });
 petshopPharmacySaleSchema.index({ prescriptionId: 1 });
 petshopPharmacySaleSchema.index({ customerContact: 1 });
 
+// Auto-generate invoice number if missing
+petshopPharmacySaleSchema.pre('save', async function(next) {
+  if (!this.invoiceNumber) {
+    try {
+      const count = await mongoose.model('PetshopPharmacySale').countDocuments();
+      const timestamp = Date.now();
+      const randomNum = Math.floor(Math.random() * 1000);
+      this.invoiceNumber = `PS-${timestamp}-${count + 1}-${randomNum}`;
+    } catch (error) {
+      console.error('Error generating petshop invoice number:', error);
+      this.invoiceNumber = `PS-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    }
+  }
+  next();
+});
+
 const PetshopPharmacySale = mongoose.model('PetshopPharmacySale', petshopPharmacySaleSchema);
 
 export default PetshopPharmacySale;

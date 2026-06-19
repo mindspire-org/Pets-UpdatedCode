@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { FiEdit2, FiPlus, FiSearch, FiTrash2, FiX } from 'react-icons/fi'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { FiEdit2, FiPlus, FiSearch, FiTrash2, FiUpload, FiX } from 'react-icons/fi'
+import * as XLSX from 'xlsx'
 import { procedureCatalogAPI } from '../../services/api'
 
 export default function ProcedureCatalog() {
@@ -23,6 +24,8 @@ export default function ProcedureCatalog() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [itemToDelete, setItemToDelete] = useState(null)
+  const [importLoading, setImportLoading] = useState(false)
+  const importInputRef = useRef(null)
 
   const resetForm = () => {
     setEditing(null)
@@ -175,6 +178,52 @@ export default function ProcedureCatalog() {
     }
   }
 
+  const handleImportFile = async (e) => {
+    try {
+      const file = e.target.files?.[0]
+      if (!file) return
+      setImportLoading(true)
+      setError('')
+
+      const data = await file.arrayBuffer()
+      const wb = XLSX.read(data, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const json = XLSX.utils.sheet_to_json(ws, { defval: '', cellDates: true })
+
+      const toNum = (v, d = 0) => {
+        if (typeof v === 'number') return isFinite(v) ? v : d
+        if (!v) return d
+        const n = parseFloat(String(v).replace(/,/g, ''))
+        return isNaN(n) ? d : n
+      }
+
+      const rows = json.map((row) => ({
+        mainCategory: row.MainCategory || row['Main Category'] || row.Category || '',
+        subCategory: row.SubCategory || row['Sub Category'] || row.Type || '',
+        drug: row.Procedure || row.Drug || row.Name || row.procedure || '',
+        unit: row.Unit || 'No',
+        defaultAmount: toNum(row.Price ?? row.Amount ?? row.Cost ?? row.Rate, 0),
+        defaultQuantity: toNum(row.Quantity ?? row.Qty, 1),
+        active: true,
+      })).filter(r => r.mainCategory && r.subCategory && r.drug)
+
+      if (rows.length === 0) {
+        throw new Error('No valid rows found. Required columns: MainCategory, SubCategory, Procedure/Drug')
+      }
+
+      const res = await procedureCatalogAPI.bulkUpsert(rows)
+      await load({ silent: true })
+      setError('')
+      alert(`Import complete: ${res?.data?.count || rows.length} procedures imported`)
+    } catch (err) {
+      console.error('Import error:', err)
+      setError(err?.message || 'Import failed')
+    } finally {
+      setImportLoading(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -183,14 +232,32 @@ export default function ProcedureCatalog() {
           <div className="text-sm text-slate-500">Manage procedures used across reception</div>
         </div>
 
-        <button
-          type="button"
-          onClick={openAdd}
-          className="h-10 px-4 rounded-xl bg-emerald-600 text-white text-sm font-semibold inline-flex items-center gap-2"
-        >
-          <FiPlus />
-          Add Procedure
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            ref={importInputRef}
+            onChange={handleImportFile}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importLoading}
+            className="h-10 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 text-white text-sm font-semibold inline-flex items-center gap-2"
+          >
+            <FiUpload />
+            {importLoading ? 'Importing…' : 'Import'}
+          </button>
+          <button
+            type="button"
+            onClick={openAdd}
+            className="h-10 px-4 rounded-xl bg-emerald-600 text-white text-sm font-semibold inline-flex items-center gap-2"
+          >
+            <FiPlus />
+            Add Procedure
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">

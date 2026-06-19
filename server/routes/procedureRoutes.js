@@ -23,9 +23,24 @@ const nextVoucherNo = async (type) => {
   return `${type}-${y}-${fmtSeq(seqDoc.seq || 0)}`;
 };
 
+const nextProcedureInvoiceNo = async () => {
+  const y = new Date().getFullYear();
+  const key = `procedure-invoice:${y}`;
+  const seqDoc = await Sequence.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `PROC-${y}-${fmtSeq(seqDoc.seq || 0)}`;
+};
+
 router.post('/', dayGuard('reception'), async (req, res) => {
   try {
-    const record = new ProcedureRecord(req.body);
+    const payload = { ...req.body };
+    if (!payload.invoiceNumber) {
+      payload.invoiceNumber = await nextProcedureInvoiceNo();
+    }
+    const record = new ProcedureRecord(payload);
     await record.save();
 
     // Auto-create / append Procedure Plan + Session for Procedure Patient Details
