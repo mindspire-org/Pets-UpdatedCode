@@ -1688,8 +1688,6 @@ export default function Medicines({
 
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(ws, { defval: "", cellDates: true });
 
       const toNum = (v, d = 0) => {
         if (typeof v === "number") return isFinite(v) ? v : d;
@@ -1698,37 +1696,72 @@ export default function Medicines({
         return isNaN(n) ? d : n;
       };
 
-      // Build all payloads client-side — zero API calls here
-      const rows = json.map((row) => {
-        const raw = {
-          medicineName: row.MedicineName || row["Medicine Name"] || row.Name || "",
-          batchNo: row.BatchNo || row["Batch No"] || row.Batch || "",
-          barcode: row.Barcode || row["Bar Code"] || row.Code || "",
-          mainCategory: row.MainCategory || row["Main Category"] || row.MainCat || "",
-          subCategory: row.Category || row.SubCategory || row["Sub Category"] || row.SubCat || "",
-          category: row.Category || row.SubCategory || row["Sub Category"] || "",
-          unit: row.Unit || "",
-          containerType: row.ContainerType || row["Container Type"] || "",
-          quantity: toNum(row.QuantityInStock ?? row.Quantity ?? row.Qty, 0),
-          mlPerVial: toNum(row.MLperContainer ?? row["ML per Vial"] ?? row.ML, 0),
-          remainingMl: toNum(row.RemainingML ?? row["Remaining ML"], 0),
-          purchasePrice: toNum(row.PurchasePrice ?? row["Purchase Price"], 0),
-          salePrice: toNum(row.SalePrice ?? row["Sale Price"], 0),
-          supplierName: row.Supplier || row["Supplier Name"] || "Unknown",
-          purchaseDate: parseDate(row.PurchaseDate || row["Purchase Date"] || ""),
-          expiryDate: parseDate(row.ExpiryDate || row["Expiry Date"] || ""),
-          lowStockThreshold: toNum(row.LowStockThreshold ?? row["Low Stock Threshold"], 10) || 10,
-          description: row.Description || "",
-          isActive: true,
-        };
-        const inferred = inferCategories(raw);
-        return {
-          ...raw,
-          mainCategory: raw.mainCategory || inferred.mainCategory,
-          subCategory: raw.subCategory || inferred.subCategory,
-          category: raw.category || inferred.subCategory || inferred.mainCategory,
-        };
+      // Case-insensitive column lookup helper so header casing/variations don't
+      // cause rows to be dropped (e.g. "medicine name" vs "MedicineName").
+      const colMap = (row) => {
+        const map = {};
+        Object.keys(row).forEach((k) => {
+          map[k] = row[k];
+          const lower = String(k).toLowerCase().replace(/[\s_]+/g, "");
+          if (!map[lower]) map[lower] = row[k];
+        });
+        return map;
+      };
+      const pick = (row, ...keys) => {
+        const m = row.__colMap || (row.__colMap = colMap(row));
+        for (const k of keys) {
+          const lk = String(k).toLowerCase().replace(/[\s_]+/g, "");
+          if (m[lk] !== undefined && m[lk] !== "") return m[lk];
+        }
+        return "";
+      };
+
+      // Read ALL sheets (not just the first) so categories placed on their own
+      // sheet — e.g. Surgical Supplies — are imported completely.
+      const allRows = [];
+      wb.SheetNames.forEach((sheetName) => {
+        const ws = wb.Sheets[sheetName];
+        const json = XLSX.utils.sheet_to_json(ws, { defval: "", cellDates: true });
+        allRows.push(...json);
       });
+
+      // Build all payloads client-side — zero API calls here
+      const rows = allRows
+        .map((row) => {
+          const raw = {
+            medicineName: pick(row, "MedicineName", "Medicine Name", "Name", "Item Name", "Item"),
+            batchNo: pick(row, "BatchNo", "Batch No", "Batch", "BatchNumber"),
+            barcode: pick(row, "Barcode", "Bar Code", "Code", "SKU"),
+            mainCategory: pick(row, "MainCategory", "Main Category", "MainCat", "Category"),
+            subCategory: pick(row, "SubCategory", "Sub Category", "SubCat", "Type", "Sub Type"),
+            category: pick(row, "Category", "SubCategory", "Sub Category", "Type"),
+            unit: pick(row, "Unit", "UOM"),
+            containerType: pick(row, "ContainerType", "Container Type"),
+            quantity: toNum(pick(row, "QuantityInStock", "Quantity", "Qty", "Stock", "Quantity In Stock"), 0),
+            mlPerVial: toNum(pick(row, "MLperContainer", "ML per Vial", "ML", "MlPerVial"), 0),
+            remainingMl: toNum(pick(row, "RemainingML", "Remaining ML"), 0),
+            purchasePrice: toNum(pick(row, "PurchasePrice", "Purchase Price", "Cost", "Buy Price"), 0),
+            salePrice: toNum(pick(row, "SalePrice", "Sale Price", "Selling Price", "Retail Price"), 0),
+            supplierName: pick(row, "Supplier", "Supplier Name", "Vendor") || "Unknown",
+            purchaseDate: parseDate(pick(row, "PurchaseDate", "Purchase Date", "Date")),
+            expiryDate: parseDate(pick(row, "ExpiryDate", "Expiry Date", "Expiry")),
+            lowStockThreshold: toNum(pick(row, "LowStockThreshold", "Low Stock Threshold", "MinStock"), 10) || 10,
+            description: pick(row, "Description", "Remarks", "Notes"),
+            isActive: true,
+          };
+          // Skip completely empty rows (no name and no barcode)
+          if (!raw.medicineName && !raw.barcode) return null;
+          // Default purchaseDate to today if missing (model requires it)
+          if (!raw.purchaseDate) raw.purchaseDate = new Date().toISOString().split("T")[0];
+          const inferred = inferCategories(raw);
+          return {
+            ...raw,
+            mainCategory: raw.mainCategory || inferred.mainCategory,
+            subCategory: raw.subCategory || inferred.subCategory,
+            category: raw.category || inferred.subCategory || inferred.mainCategory,
+          };
+        })
+        .filter(Boolean);
 
       // One single API call for everything
       const result = await medicinesAPI.bulkUpsert(rows);

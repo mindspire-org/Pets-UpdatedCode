@@ -6,9 +6,25 @@ import PetshopPharmacyPurchase from '../models/PetshopPharmacyPurchase.js';
 import PetshopPharmacyDue from '../models/PetshopPharmacyDue.js';
 import PetshopPharmacyCreditCustomer from '../models/PetshopPharmacyCreditCustomer.js';
 import PetshopNotification from '../models/PetshopNotification.js';
+import Sequence from '../models/Sequence.js';
 import { postShopSale } from '../utils/accountingService.js';
 
 const router = express.Router();
+
+// Atomic, collision-free invoice number generator (replaces the random
+// PS-<timestamp>-<count>-<rand> scheme that could clash with the unique
+// index and abort the sale AFTER inventory had already been decreased).
+const fmtSeq = (n) => String(n).padStart(6, '0');
+const nextPetshopInvoiceNo = async () => {
+  const y = new Date().getFullYear();
+  const key = `petshop-sale-invoice:${y}`;
+  const seqDoc = await Sequence.findOneAndUpdate(
+    { key },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `PS-${y}-${fmtSeq(seqDoc.seq || 0)}`;
+};
 
 // ==================== DUES (CLIENT PREVIOUS BALANCE) ====================
 
@@ -239,6 +255,10 @@ router.post('/sales', async (req, res) => {
   try {
     const { items, ...saleData } = req.body;
 
+    // 1) Validate all items & stock availability BEFORE making any changes.
+    //    This prevents the "payment failed but inventory decreased" scenario:
+    //    if any item is invalid or out of stock we abort before touching stock.
+    const medicineDocs = [];
     for (const item of items) {
       const quantity = parseFloat(item.quantity);
       if (isNaN(quantity) || quantity <= 0) {
@@ -269,7 +289,24 @@ router.post('/sales', async (req, res) => {
           message: `Insufficient stock for ${medicine.medicineName}. Available: ${medicine.quantity}`
         });
       }
+      medicineDocs.push({ medicine, quantity, item });
+    }
 
+    // 2) Generate a deterministic, collision-free invoice number up front so
+    //    the sale document saves cleanly (the model's pre-save hook used a
+    //    random suffix that could collide with the unique index).
+    if (!saleData.invoiceNumber) {
+      saleData.invoiceNumber = await nextPetshopInvoiceNo();
+    }
+
+    // 3) Create the sale record first. If this fails (validation, duplicate
+    //    invoice, etc.) the transaction aborts and NO inventory is changed.
+    const sale = new PetshopPharmacySale({ items, ...saleData });
+    await sale.save({ session });
+
+    // 4) Only after the sale is persisted do we decrease inventory. Both
+    //    operations are in the same transaction so they commit together.
+    for (const { medicine, quantity, item } of medicineDocs) {
       medicine.quantity -= quantity;
 
       if (medicine.category === 'Injection' && item.mlUsed) {
@@ -288,9 +325,6 @@ router.post('/sales', async (req, res) => {
 
       await medicine.save({ session });
     }
-
-    const sale = new PetshopPharmacySale({ items, ...saleData });
-    await sale.save({ session });
 
     await session.commitTransaction();
     session.endSession();

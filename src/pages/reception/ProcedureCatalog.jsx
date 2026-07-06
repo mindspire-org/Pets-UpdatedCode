@@ -187,8 +187,6 @@ export default function ProcedureCatalog() {
 
       const data = await file.arrayBuffer()
       const wb = XLSX.read(data, { type: 'array' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const json = XLSX.utils.sheet_to_json(ws, { defval: '', cellDates: true })
 
       const toNum = (v, d = 0) => {
         if (typeof v === 'number') return isFinite(v) ? v : d
@@ -197,13 +195,40 @@ export default function ProcedureCatalog() {
         return isNaN(n) ? d : n
       }
 
-      const rows = json.map((row) => ({
-        mainCategory: row.MainCategory || row['Main Category'] || row.Category || '',
-        subCategory: row.SubCategory || row['Sub Category'] || row.Type || '',
-        drug: row.Procedure || row.Drug || row.Name || row.procedure || '',
-        unit: row.Unit || 'No',
-        defaultAmount: toNum(row.Price ?? row.Amount ?? row.Cost ?? row.Rate, 0),
-        defaultQuantity: toNum(row.Quantity ?? row.Qty, 1),
+      // Case-insensitive, whitespace/symbol-insensitive column lookup
+      const colMap = (row) => {
+        const map = {}
+        Object.keys(row).forEach((k) => {
+          map[k] = row[k]
+          const lower = String(k).toLowerCase().replace(/[\s_]+/g, '')
+          if (!(lower in map)) map[lower] = row[k]
+        })
+        return map
+      }
+      const pick = (row, ...keys) => {
+        const m = row.__cm || (row.__cm = colMap(row))
+        for (const k of keys) {
+          const lk = String(k).toLowerCase().replace(/[\s_]+/g, '')
+          if (m[lk] !== undefined && m[lk] !== '') return m[lk]
+        }
+        return ''
+      }
+
+      // Read ALL sheets so categories on separate sheets are imported too
+      const allRows = []
+      wb.SheetNames.forEach((sheetName) => {
+        const ws = wb.Sheets[sheetName]
+        const json = XLSX.utils.sheet_to_json(ws, { defval: '', cellDates: true })
+        allRows.push(...json)
+      })
+
+      const rows = allRows.map((row) => ({
+        mainCategory: pick(row, 'MainCategory', 'Main Category', 'Category', 'Cat'),
+        subCategory: pick(row, 'SubCategory', 'Sub Category', 'SubCat', 'Type', 'Sub Type'),
+        drug: pick(row, 'Procedure', 'Drug', 'Name', 'Item', 'ProcedureName'),
+        unit: pick(row, 'Unit', 'UOM') || 'No',
+        defaultAmount: toNum(pick(row, 'Price', 'Amount', 'Cost', 'Rate', 'DefaultAmount', 'Fee'), 0),
+        defaultQuantity: toNum(pick(row, 'Quantity', 'Qty', 'DefaultQuantity'), 1),
         active: true,
       })).filter(r => r.mainCategory && r.subCategory && r.drug)
 

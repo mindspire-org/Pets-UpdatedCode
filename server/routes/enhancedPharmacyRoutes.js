@@ -235,15 +235,25 @@ router.post('/medicines/bulk-upsert', async (req, res) => {
     const normalize = (v) => String(v || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '');
 
     // Auto-generate deterministic barcode if missing, using normalized medicine name
-    const rowsWithBarcodes = rows.map(r => {
+    // Deduplicate by barcode so rows sharing a barcode (e.g. same item on
+    // multiple sheets) don't collide with a duplicate-key error.
+    const seenBarcodes = new Set();
+    const rowsWithBarcodes = [];
+    for (const r of rows) {
       const row = { ...r };
       const barcode = String(row.barcode || '').trim();
       const medicineName = String(row.medicineName || '').trim();
       if (!barcode && medicineName) {
         row.barcode = `AUTO-${normalize(medicineName).toUpperCase()}`;
       }
-      return row;
-    });
+      const key = String(row.barcode || '').trim().toLowerCase();
+      if (key && seenBarcodes.has(key)) {
+        // Already queued — skip duplicate to avoid duplicate-key insert errors
+        continue;
+      }
+      if (key) seenBarcodes.add(key);
+      rowsWithBarcodes.push(row);
+    }
 
     // Fetch all existing barcodes in one query
     const barcodes = rowsWithBarcodes.map(r => String(r.barcode || '').trim()).filter(Boolean);
@@ -257,6 +267,12 @@ router.post('/medicines/bulk-upsert', async (req, res) => {
         if (!barcode) { errors++; errorList.push('Row missing barcode and medicineName'); continue; }
 
         const payload = { ...row };
+        // Ensure required fields have sane defaults so validation never rejects
+        // non-drug items (e.g. Surgical Supplies) that may lack price/date.
+        if (payload.quantity === undefined || payload.quantity === null) payload.quantity = 0;
+        if (payload.purchasePrice === undefined || payload.purchasePrice === null) payload.purchasePrice = 0;
+        if (payload.salePrice === undefined || payload.salePrice === null) payload.salePrice = 0;
+        if (!payload.purchaseDate) payload.purchaseDate = new Date();
         // Injection remainingMl auto-calc
         if ((payload.category || '').toLowerCase() === 'injection') {
           if (!payload.remainingMl && payload.mlPerVial && payload.quantity) {
@@ -291,7 +307,7 @@ router.post('/medicines/bulk-upsert', async (req, res) => {
       await PharmacyMedicine.bulkWrite(bulkOps, { ordered: false });
     }
 
-    res.json({ success: true, created, updated, errors, errorList });
+    res.json({ success: true, created, updated, errors, errorList, totalProcessed: rowsWithBarcodes.length });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

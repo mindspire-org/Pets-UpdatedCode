@@ -203,42 +203,13 @@ export default function SalesReturn() {
         totalReturnAmount: returnTotal,
       });
 
-      for (const item of itemsToReturn) {
-        try {
-          const medicineRes = await petshopPharmacyMedicinesAPI.getById(
-            item.medicineId,
-          );
-          const currentMedicine = medicineRes.data;
-
-          if (currentMedicine) {
-            let newStock;
-            if (item.sellBy?.toLowerCase() === "pack") {
-              const currentPacks = Number(currentMedicine.qtyPacks) || 0;
-              newStock = {
-                qtyPacks: currentPacks + item.returnQty,
-              };
-            } else {
-              const currentPacks = Number(currentMedicine.qtyPacks) || 0;
-              const unitsPerPack = Number(currentMedicine.unitsPerPack) || 1;
-              const currentTotalPieces = currentPacks * unitsPerPack;
-              const newTotalPieces = currentTotalPieces + item.returnQty;
-              const newPacks = Math.floor(newTotalPieces / unitsPerPack);
-
-              newStock = {
-                qtyPacks: newPacks,
-              };
-            }
-
-            await petshopPharmacyMedicinesAPI.update(item.medicineId, newStock);
-          }
-        } catch (inventoryError) {
-          console.error(
-            `Failed to update inventory for ${item.medicineName}:`,
-            inventoryError,
-          );
-          showToast(`Warning: Inventory not updated for ${item.medicineName}`);
-        }
-      }
+      // Inventory is restored atomically inside the backend
+      // createCustomerReturn transaction (it adds returnQty back to
+      // medicine.quantity). The previous frontend code also tried to update
+      // inventory here but used the wrong field (qtyPacks), which caused a
+      // double-restoration AND had no effect on the actual stock field. We
+      // now rely solely on the backend for correct, transactional inventory
+      // restoration.
 
       setSlipData({
         returnNumber: res?.data?.returnNumber || "RTN-" + Date.now(),

@@ -921,7 +921,10 @@ export default function DoctorPrescription(){
       notes: { ...notes },
       doctor: JSON.parse(localStorage.getItem('doctor_auth') || '{}')
     }
-    await save()
+    // Save WITHOUT resetting the form — resetAll() inside save() clears
+    // preview/patient state which races with openPreview below and causes
+    // the auto-print to never fire. We reset after the print dialog closes.
+    await save({ skipReset: true })
     setAutoPrintPreview(true)
     openPreview(doc)
   }
@@ -956,7 +959,8 @@ export default function DoctorPrescription(){
     }
   }
 
-  const save = async () => {
+  const save = async (opts = {}) => {
+    const { skipReset = false } = opts
     if(!canSave) {
       showToast('Please select a patient and add at least one medicine', 'error')
       return
@@ -1157,8 +1161,9 @@ export default function DoctorPrescription(){
       setResetOnClose(true)
       // Capture editing state before resetting (for toast message)
       const wasEditing = !!editingId
-      // Reset form and clear editing state
-      resetAll()
+      // Reset form and clear editing state (skipped when caller handles reset,
+      // e.g. saveAndPrint resets after the print dialog closes instead)
+      if (!skipReset) resetAll()
       // Show success message (use captured state)
       showToast(wasEditing ? 'Prescription updated successfully!' : 'Prescription saved successfully!', 'success')
       
@@ -1948,8 +1953,8 @@ export default function DoctorPrescription(){
           fallbackNotes={preview?.notes}
           fallbackPatient={preview?.patient}
           autoPrint={autoPrintPreview}
-          onClose={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false) }}
-          onAfterPrint={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false) }}
+          onClose={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false); if (resetOnClose) resetAll() }}
+          onAfterPrint={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false); if (resetOnClose) resetAll() }}
         />
       )}
 

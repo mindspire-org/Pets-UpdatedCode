@@ -37,19 +37,32 @@ export function SettingsProvider({ children }){
         // Fetch from the NEW shared pharmacy settings collection
         response = await pharmacySettingsAPI.get()
       } else {
-        // Fallback for admin/other portals
+        // Company-wide info (address, phone, logo, name) is saved under
+        // userId='admin' by the admin Settings page. Per-user settings may
+        // exist but typically lack the address/footer fields, which caused
+        // the doctor/reception prescription footer to be empty. Always load
+        // the admin settings first, then layer any per-user overrides on top.
         const user = JSON.parse(localStorage.getItem('user') || '{}')
-        response = await settingsAPI.get(user.username || 'admin')
+        const adminRes = await settingsAPI.get('admin')
+        const adminData = (adminRes && adminRes.data) ? adminRes.data : {}
+        let userData = {}
+        if (user.username && user.username !== 'admin') {
+          try {
+            const userRes = await settingsAPI.get(user.username)
+            if (userRes && userRes.data) userData = userRes.data
+          } catch {}
+        }
+        response = { data: { ...adminData, ...userData } }
       }
 
       if (response && response.data) {
         const data = response.data
         const migrated = { ...data }
-        
+
         // Map pharmacy fields to global context fields
         if (data.pharmacyName) migrated.companyName = data.pharmacyName
         if (data.companyLogo) migrated.companyLogo = data.companyLogo
-        
+
         if (migrated.companyName) {
           migrated.companyName = normalizeCompanyName(migrated.companyName)
         }

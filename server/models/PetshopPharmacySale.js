@@ -138,17 +138,27 @@ petshopPharmacySaleSchema.index({ createdAt: -1 });
 petshopPharmacySaleSchema.index({ prescriptionId: 1 });
 petshopPharmacySaleSchema.index({ customerContact: 1 });
 
-// Auto-generate invoice number if missing
+// Auto-generate invoice number if missing — uses the atomic Sequence
+// counter to avoid the random-suffix collisions that previously caused
+// sale saves to fail (and, inside a transaction, roll back inventory
+// decreases that had already been applied).
 petshopPharmacySaleSchema.pre('save', async function(next) {
   if (!this.invoiceNumber) {
     try {
-      const count = await mongoose.model('PetshopPharmacySale').countDocuments();
-      const timestamp = Date.now();
-      const randomNum = Math.floor(Math.random() * 1000);
-      this.invoiceNumber = `PS-${timestamp}-${count + 1}-${randomNum}`;
+      const Sequence = mongoose.model('Sequence');
+      const y = new Date().getFullYear();
+      const key = `petshop-sale-invoice:${y}`;
+      const seqDoc = await Sequence.findOneAndUpdate(
+        { key },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+      const seq = String(seqDoc.seq || 0).padStart(6, '0');
+      this.invoiceNumber = `PS-${y}-${seq}`;
     } catch (error) {
       console.error('Error generating petshop invoice number:', error);
-      this.invoiceNumber = `PS-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      // Last-resort fallback with enough randomness to be effectively unique
+      this.invoiceNumber = `PS-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
     }
   }
   next();
