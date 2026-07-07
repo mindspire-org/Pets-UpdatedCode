@@ -1953,8 +1953,8 @@ export default function DoctorPrescription(){
           fallbackNotes={preview?.notes}
           fallbackPatient={preview?.patient}
           autoPrint={autoPrintPreview}
-          onClose={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false); if (resetOnClose) resetAll() }}
-          onAfterPrint={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false); if (resetOnClose) resetAll() }}
+          onClose={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false) }}
+          onAfterPrint={()=>{ setShowPreview(false); setPreview(null); setAutoPrintPreview(false) }}
         />
       )}
 

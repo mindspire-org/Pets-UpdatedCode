@@ -250,31 +250,23 @@ router.get('/sales/:id', async (req, res) => {
 });
 
 router.post('/sales', async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
   try {
     const { items, ...saleData } = req.body;
 
-    // 1) Validate all items & stock availability BEFORE making any changes.
-    //    This prevents the "payment failed but inventory decreased" scenario:
-    //    if any item is invalid or out of stock we abort before touching stock.
-    const medicineDocs = [];
+    // Phase 1: Validate all items and check stock before making any changes
+    const medicineUpdates = [];
     for (const item of items) {
       const quantity = parseFloat(item.quantity);
       if (isNaN(quantity) || quantity <= 0) {
-        await session.abortTransaction();
-        session.endSession();
         return res.status(400).json({
           success: false,
           message: `Invalid quantity for ${item.medicineName}`
         });
       }
 
-      const medicine = await PetshopPharmacyMedicine.findById(item.medicineId).session(session);
+      const medicine = await PetshopPharmacyMedicine.findById(item.medicineId);
 
       if (!medicine) {
-        await session.abortTransaction();
-        session.endSession();
         return res.status(404).json({
           success: false,
           message: `Medicine ${item.medicineName} not found`
@@ -282,31 +274,22 @@ router.post('/sales', async (req, res) => {
       }
 
       if (medicine.quantity < quantity) {
-        await session.abortTransaction();
-        session.endSession();
         return res.status(400).json({
           success: false,
           message: `Insufficient stock for ${medicine.medicineName}. Available: ${medicine.quantity}`
         });
       }
-      medicineDocs.push({ medicine, quantity, item });
+
+      medicineUpdates.push({ medicine, item, quantity });
     }
 
-    // 2) Generate a deterministic, collision-free invoice number up front so
-    //    the sale document saves cleanly (the model's pre-save hook used a
-    //    random suffix that could collide with the unique index).
-    if (!saleData.invoiceNumber) {
-      saleData.invoiceNumber = await nextPetshopInvoiceNo();
-    }
-
-    // 3) Create the sale record first. If this fails (validation, duplicate
-    //    invoice, etc.) the transaction aborts and NO inventory is changed.
+    // Phase 2: Save the sale first (so we have a record even if inventory update partially fails)
     const sale = new PetshopPharmacySale({ items, ...saleData });
-    await sale.save({ session });
+    await sale.save();
 
-    // 4) Only after the sale is persisted do we decrease inventory. Both
-    //    operations are in the same transaction so they commit together.
-    for (const { medicine, quantity, item } of medicineDocs) {
+    // Phase 3: Decrease inventory for each item (no transaction — standalone MongoDB)
+    const updatedMedicines = [];
+    for (const { medicine, item, quantity } of medicineUpdates) {
       medicine.quantity -= quantity;
 
       if (medicine.category === 'Injection' && item.mlUsed) {
@@ -323,11 +306,9 @@ router.post('/sales', async (req, res) => {
         }
       }
 
-      await medicine.save({ session });
+      await medicine.save();
+      updatedMedicines.push(medicine);
     }
-
-    await session.commitTransaction();
-    session.endSession();
 
     // Post-commit side effects (non-critical)
     try {
@@ -362,8 +343,6 @@ router.post('/sales', async (req, res) => {
 
     res.status(201).json({ success: true, data: sale });
   } catch (error) {
-    await session.abortTransaction().catch(() => {});
-    session.endSession();
     res.status(500).json({ success: false, message: error.message });
   }
 });

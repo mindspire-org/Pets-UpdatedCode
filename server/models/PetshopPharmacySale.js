@@ -142,7 +142,7 @@ petshopPharmacySaleSchema.index({ customerContact: 1 });
 // counter to avoid the random-suffix collisions that previously caused
 // sale saves to fail (and, inside a transaction, roll back inventory
 // decreases that had already been applied).
-petshopPharmacySaleSchema.pre('save', async function(next) {
+petshopPharmacySaleSchema.pre('validate', async function(next) {
   if (!this.invoiceNumber) {
     try {
       const Sequence = mongoose.model('Sequence');

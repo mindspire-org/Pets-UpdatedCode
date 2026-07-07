@@ -203,13 +203,39 @@ export default function SalesReturn() {
         totalReturnAmount: returnTotal,
       });
 
-      // Inventory is restored atomically inside the backend
-      // createCustomerReturn transaction (it adds returnQty back to
-      // medicine.quantity). The previous frontend code also tried to update
-      // inventory here but used the wrong field (qtyPacks), which caused a
-      // double-restoration AND had no effect on the actual stock field. We
-      // now rely solely on the backend for correct, transactional inventory
-      // restoration.
+      for (const item of itemsToReturn) {
+        try {
+          const medicineRes = await petshopPharmacyMedicinesAPI.getById(
+            item.medicineId,
+          );
+          const currentMedicine = medicineRes.data;
+
+          if (currentMedicine) {
+            // The sale route decreases medicine.quantity, so returns must
+            // increase the SAME field. Previously this updated qtyPacks which
+            // is a separate field and left quantity unchanged — so returned
+            // stock never actually came back into inventory.
+            const currentQty = Number(currentMedicine.quantity) || 0;
+            const restoredQty = currentQty + Number(item.returnQty || 0);
+
+            // Also keep qtyPacks in sync when the item is sold by packs so
+            // pack-based views stay consistent.
+            const update = { quantity: restoredQty };
+            if (item.sellBy?.toLowerCase() === "pack") {
+              const unitsPerPack = Number(currentMedicine.unitsPerPack) || 1;
+              update.qtyPacks = Math.floor(restoredQty / unitsPerPack);
+            }
+
+            await petshopPharmacyMedicinesAPI.update(item.medicineId, update);
+          }
+        } catch (inventoryError) {
+          console.error(
+            `Failed to update inventory for ${item.medicineName}:`,
+            inventoryError,
+          );
+          showToast(`Warning: Inventory not updated for ${item.medicineName}`);
+        }
+      }
 
       setSlipData({
         returnNumber: res?.data?.returnNumber || "RTN-" + Date.now(),

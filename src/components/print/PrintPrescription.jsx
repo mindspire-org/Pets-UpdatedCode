@@ -610,14 +610,8 @@ export default function PrintPrescription({
                   <div className="text-xs text-slate-500">{settings?.companyName || 'Pets Hospital'}</div>
                   {settings?.address && <div className="text-xs text-slate-500 mt-1">{settings.address}</div>}
                   {settings?.phone && <div className="text-xs text-slate-500">{settings.phone}</div>}
-                  {settings?.email && <div className="text-xs text-slate-500">{settings.email}</div>}
                 </div>
               </div>
-              {settings?.billingFooter && (
-                <div style={{position:'absolute', left:'24px', right:'24px', bottom:'16px', textAlign:'center', fontSize:'9px', color:'#000', borderTop:'1px solid #000', paddingTop:'2px'}}>
-                  {settings.billingFooter}
-                </div>
-              )}
             </div>
           </div>
 

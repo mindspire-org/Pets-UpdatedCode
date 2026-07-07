@@ -108,8 +108,6 @@ router.get("/sales-history", async (req, res) => {
 });
 
 router.post("/returns/customer", async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
   try {
     const {
       originalSaleId,
@@ -120,10 +118,8 @@ router.post("/returns/customer", async (req, res) => {
       notes,
     } = req.body;
 
-    const originalSale = await PetshopPharmacySale.findById(originalSaleId).session(session);
+    const originalSale = await PetshopPharmacySale.findById(originalSaleId);
     if (!originalSale) {
-      await session.abortTransaction();
-      session.endSession();
       return res
         .status(404)
         .json({ success: false, message: "Original sale not found" });
@@ -131,7 +127,7 @@ router.post("/returns/customer", async (req, res) => {
 
     const lastReturn = await PetshopPharmacyReturn.findOne({
       returnType: "Customer Return",
-    }).sort({ createdAt: -1 }).session(session);
+    }).sort({ createdAt: -1 });
     let returnNumber = "CR-0001";
     if (lastReturn && lastReturn.returnNumber) {
       const lastNumber = parseInt(lastReturn.returnNumber.split("-")[1]);
@@ -144,12 +140,12 @@ router.post("/returns/customer", async (req, res) => {
     );
 
     for (const item of items) {
-      const medicine = await PetshopPharmacyMedicine.findById(item.medicineId).session(session);
+      const medicine = await PetshopPharmacyMedicine.findById(item.medicineId);
       if (medicine) {
         const returnQty = parseFloat(item.quantity) || 0;
         if (returnQty > 0) {
           medicine.quantity += returnQty;
-          await medicine.save({ session });
+          await medicine.save();
         }
       }
 
@@ -213,7 +209,7 @@ router.post("/returns/customer", async (req, res) => {
       );
     }
 
-    await originalSale.save({ session });
+    await originalSale.save();
 
     const customerReturn = new PetshopPharmacyReturn({
       returnNumber,
@@ -229,10 +225,7 @@ router.post("/returns/customer", async (req, res) => {
       processedBy: req.body.processedBy || "System",
     });
 
-    await customerReturn.save({ session });
-
-    await session.commitTransaction();
-    session.endSession();
+    await customerReturn.save();
 
     try {
       await PetshopNotification.create({
@@ -267,8 +260,6 @@ router.post("/returns/customer", async (req, res) => {
       message: "Customer return processed successfully",
     });
   } catch (error) {
-    await session.abortTransaction().catch(() => {});
-    session.endSession();
     res.status(500).json({ success: false, message: error.message });
   }
 });
